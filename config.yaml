@@ -1,0 +1,54 @@
+# Global Configuration for DJSCC and Conventional Baselines
+
+# --- Common Parameters ---
+common:
+  image:
+    width: 768
+    height: 512
+    channel: 3
+  torch_device: "auto"      # Device for PyTorch operations (auto, cpu, mps, cuda)
+  packet_len: 960           # Common OFDM packet length in symbols
+
+# --- GNU Radio Parameters ---
+gnuradio:
+  samp_rate: 1000000.0      # Sampling Frequency in Hz (1 MHz)
+  carrier_freq: 2450000000.0 # Carrier Frequency in Hz (2.45 GHz)
+  band: 5000000.0           # Bandwidth in Hz (5 MHz)
+  # Parameters for the transmitting flowgraphs (djscc_tx.grc, conventional_tx.grc)
+  tx:
+    gain: 18                  # TX Gain (dB). Note: GRC file must use a 'parameter' block for this.
+  # Parameters for the receiving flowgraphs
+  rx:
+    gain: 20                  # RX Gain (dB). Note: GRC file must use a 'parameter' block for this.
+
+# --- ZMQ Communication ---
+zmq:
+  host: "127.0.0.1"
+  djscc_tx_port: 5556         # Python (djscc_tx) -> GRC (djscc_tx)
+  conventional_tx_port: 5557  # Python (conv_tx) -> GRC (conv_tx)
+  djscc_rx_port: 5558         # GRC (djscc_rx) -> Python (djscc_rx)
+  conventional_rx_port: 5559  # GRC (conv_rx) -> Python (conv_rx)
+
+# --- Deep JSCC (DJSCC) Specific Parameters ---
+djscc:
+  model_path: "model_checkpoints/AWGN_rate_16_AD_JSCC_SNR_random_EP_3.pth"
+  comp_ratio: 6               # Inverse compression ratio (e.g., 6 for 1/6 rate)
+  snr_db: 19.0                # SNR for attention mechanism
+  quantize_cpu: false         # Use INT8 quantization on CPU
+  rx:
+    output_dir: "./received_images_djscc"
+
+# --- Conventional (JPEG/J2K + LDPC) Specific Parameters ---
+conventional:
+  comp_ratio_equivalent: 6    # Equivalent DJSCC compression ratio to match channel use
+  codec: "jpeg"               # "jpeg" or "jpeg2000"
+  codec_quality: 48           # JPEG quality (1-95) or J2K ratio
+  ldpc:
+    n: 1920                   # Codeword length
+    k: 960                    # Message length
+    bp_iters: 5               # Belief propagation iterations for LDPC decoder
+  modulation:
+    bits_per_symbol: 2        # 1=BPSK, 2=QPSK, 4=16QAM. Must match GRC `mod_order`.
+    demap: "soft"             # "soft" or "hard" demapping
+  interleave: true            # Apply block interleaver to LDPC codewords       
+  output_dir: "./received_images_conventional"

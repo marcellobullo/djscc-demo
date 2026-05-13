@@ -68,20 +68,24 @@ You can run the demo in either **DJSCC** or **SSCC** mode. Open separate termina
    ```bash
    python receiver/socket_djscc_rx.py --model ./model_checkpoints/AWGN_rate_16_AD_JSCC_SNR_random_EP_3.pth --no-save --comp-ratio 6
    ```
+   <img src="assets/socket_djscc_rx_diagram.png" alt="SSCC Mode Preview" width="250">
 2. Start the GNU Radio receiver flowgraph:
    ```bash
    python djscc_rx.py
    ```
+   <img src="assets/djscc_rx_diagram.png" alt="SSCC Mode Preview" width="250">
 
 #### Transmitter (TX)
 1. Start the GNU Radio transmitter flowgraph:
    ```bash
    python djscc_tx.py
    ```
+   <img src="assets/djscc_tx_diagram.png" alt="SSCC Mode Preview" width="250">
 2. Start the Python transmitter:
    ```bash
    python transmitter/socket_djscc_tx.py --model ./model_checkpoints/AWGN_rate_16_AD_JSCC_SNR_random_EP_3.pth --no-warmup --comp-ratio 6
    ```
+   <img src="assets/socket_djscc_diagram.png" alt="SSCC Mode Preview" width="250">
 
 ---
 
@@ -92,20 +96,24 @@ You can run the demo in either **DJSCC** or **SSCC** mode. Open separate termina
    ```bash
    python receiver/socket_conventional_rx.py --codec jpeg --bits-per-symbol 2 --ldpc-n 1920 --ldpc-k 960 --no-save --bp-iters 10 --demap soft --interleave
    ```
+     <img src="assets/socket_sscc_rx.png" alt="SSCC Mode Preview" width="250">
 2. Start the GNU Radio receiver flowgraph:
    ```bash
    python djscc_rx.py
    ```
+     <img src="assets/sscc_rx_diagram.png" alt="SSCC Mode Preview" width="250">
 
 #### Transmitter (TX)
 1. Start the GNU Radio transmitter flowgraph:
    ```bash
    python djscc_tx.py
    ```
+     <img src="assets/sscc_tx_diagram.png" alt="SSCC Mode Preview" width="250">
 2. Start the conventional Python transmitter:
    ```bash
    python transmitter/socket_conventional_tx.py --codec jpeg --bits-per-symbol 2 --ldpc-n 1920 --ldpc-k 960 --bp-iters 10 --interleave
    ```
+     <img src="assets/socket_sscc_tx_diagram.png" alt="SSCC Mode Preview" width="250">
 
 ---
 

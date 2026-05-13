@@ -4,9 +4,14 @@
   <img src="assets/6g-goals-logo.png" alt="Logo 2" height="50" />
 </div>
 
+
 # DeepJSCC Demo
 
-This repository contains a demonstration of Deep Joint Source-Channel Coding (DJSCC) along with a Conventional Separate Source-Channel Coding (SSCC) baseline (JPEG/JPEG2000+LDPC). The demo integrates Python-based deep learning models and traditional codecs with GNU Radio for Over-The-Air transmission.
+**Authors:** Marcello Bullo, Meng Hua
+
+**Institution**: Imperial College London
+
+**Description:** This repository contains a demonstration of Deep Joint Source-Channel Coding (DJSCC) along with a Conventional Separate Source-Channel Coding (SSCC) baseline (JPEG/JPEG2000+LDPC). The demo integrates Python-based deep learning models and traditional codecs with GNU Radio for Over-The-Air transmission.
 
 **DJSCC Mode**  
 ![DJSCC Mode Preview](assets/djscc_diagram.png)
@@ -71,14 +76,14 @@ You can run the demo in either **DJSCC** or **SSCC** mode. Open separate termina
    <img src="assets/socket_djscc_rx_diagram.png" alt="SSCC Mode Preview" width="250">
 2. Start the GNU Radio receiver flowgraph:
    ```bash
-   python djscc_rx.py
+   python receiver/gnu_radio/djscc_rx.py
    ```
    <img src="assets/djscc_rx_diagram.png" alt="SSCC Mode Preview" width="250">
 
 #### Transmitter (TX)
 1. Start the GNU Radio transmitter flowgraph:
    ```bash
-   python djscc_tx.py
+   python transmitter/gnu_radio/djscc_tx.py
    ```
    <img src="assets/djscc_tx_diagram.png" alt="SSCC Mode Preview" width="250">
 2. Start the Python transmitter:
@@ -99,14 +104,14 @@ You can run the demo in either **DJSCC** or **SSCC** mode. Open separate termina
      <img src="assets/socket_sscc_rx.png" alt="SSCC Mode Preview" width="250">
 2. Start the GNU Radio receiver flowgraph:
    ```bash
-   python djscc_rx.py
+   python receiver/gnu_radio/conventional_rx.py
    ```
      <img src="assets/sscc_rx_diagram.png" alt="SSCC Mode Preview" width="250">
 
 #### Transmitter (TX)
 1. Start the GNU Radio transmitter flowgraph:
    ```bash
-   python djscc_tx.py
+   python transmitter/gnu_radio/conventional_tx.py
    ```
      <img src="assets/sscc_tx_diagram.png" alt="SSCC Mode Preview" width="250">
 2. Start the conventional Python transmitter:

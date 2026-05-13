@@ -1,13 +1,15 @@
 <div align="center">
-  <img src="assets/imperial_logo.png" alt="Logo 1" height="30" />
+  <img src="assets/imperial_logo.png" alt="Institute Logo" height="30" />
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="assets/6g-goals-logo.png" alt="Logo 2" height="50" />
+  <img src="assets/6g-goals-logo.png" alt="Project Logo" height="50" />
 </div>
 
 
 # DeepJSCC Demo
 
 **Authors:** Marcello Bullo, Meng Hua
+
+**Reference**: m.bullo21@imperial.ac.uk, bullo.marcello@gmail.com
 
 **Institution**: Imperial College London
 
@@ -61,7 +63,7 @@
         bash ./download_model_checkpoints.sh
         ```
 
-## Running the Demo
+## Running the Demo (CLI)
 
 You can run the demo in either **DJSCC** or **SSCC** mode. Open separate terminal windows for the Receiver (RX) and Transmitter (TX) components.
 
@@ -120,9 +122,7 @@ You can run the demo in either **DJSCC** or **SSCC** mode. Open separate termina
    ```
      <img src="assets/socket_sscc_tx_diagram.png" alt="SSCC Mode Preview" width="250">
 
----
-
-### Dashboards (Interactive UI)
+## Dashboards (Interactive UI)
 Instead of using the CLI for the transmitter and receiver, you can launch the interactive Streamlit dashboards. They will manage the GNURadio and Python scripts for you:
 
 **Transmitter Dashboard:**

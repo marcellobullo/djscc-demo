@@ -65,13 +65,18 @@ import zmq
 import scipy.sparse
 from PIL import Image, ImageFile
 
-from kaira.models.fec.encoders import LDPCCodeEncoder
 from ldpc import bp_decoder
 
 # Allow PIL to load slightly truncated streams (channel BER may corrupt the
 # final J2K markers in low-SNR runs; let it try anyway).
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+import sys
+from pathlib import Path
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+from utils.parity_matrix_helper import load_parity_matrix, get_generator_and_info_bits
 
 def _pick_device(device: str) -> str:
     if device == "auto":
@@ -180,17 +185,10 @@ class LDPCBatchDecoder:
         self.n = ldpc_n
         self.k = ldpc_k
         self.device = device
+
+        self.H = load_parity_matrix(ldpc_n, ldpc_k)
         
-        # Load Kaira purely as a factory to extract the Parity Check Matrix
-        _kaira_factory = LDPCCodeEncoder(
-            code_length=ldpc_n, code_dimension=ldpc_k, rptu_database=True)
-        
-        # Extract Parity Check Matrix (PCM) using the @property
-        H_dense = _kaira_factory.parity_check_matrix.cpu().numpy()
-        self.H = scipy.sparse.csr_matrix(H_dense)
-        
-        # Info bit positions (first k bits mapping the message from the codeword)
-        self.info_bits = np.arange(ldpc_k)
+        _, self.info_bits = get_generator_and_info_bits(ldpc_n, ldpc_k)
         
         # Initialize the blazing-fast C++ Belief Propagation decoder
         self.decoder = bp_decoder(

@@ -69,9 +69,18 @@ import numpy as np
 import pmt
 import torch
 import zmq
+import scipy.sparse
 from PIL import Image
 
-from kaira.models.fec.encoders import LDPCCodeEncoder
+import ldpc.code_util
+
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+from utils.parity_matrix_helper import get_generator_and_info_bits
 
 
 # ── UI constants ────────────────────────────────────────────────────────────
@@ -305,25 +314,32 @@ class LDPCBatchEncoder:
     def __init__(self, ldpc_n: int, ldpc_k: int):
         self.n = ldpc_n
         self.k = ldpc_k
-        self.encoder = LDPCCodeEncoder(
-            code_length=ldpc_n, code_dimension=ldpc_k, rptu_database=True)
+        
+        # Get systematic generator matrix directly
+        G, _ = get_generator_and_info_bits(ldpc_n, ldpc_k)
+        self.G = G.astype(np.uint16)
 
     def encode_bytes(self, padded_msg: np.ndarray) -> np.ndarray:
         """``padded_msg`` length must equal num_blocks * (k/8). Returns
         num_blocks * (n/8) bytes."""
         if padded_msg.dtype != np.uint8:
             padded_msg = padded_msg.astype(np.uint8)
+
         bytes_per_msg = self.k // 8
         if len(padded_msg) % bytes_per_msg:
             raise ValueError(
                 f"LDPC input of {len(padded_msg)} bytes is not a multiple of "
                 f"k/8 = {bytes_per_msg}")
+
         num_blocks = len(padded_msg) // bytes_per_msg
         bits = np.unpackbits(padded_msg, bitorder='little').reshape(num_blocks, self.k)
-        with torch.no_grad():
-            t = torch.from_numpy(bits).to(torch.float32)
-            out_t = self.encoder(t)
-        out_bits = (out_t.numpy() > 0.5).astype(np.uint8).reshape(-1)
+
+        # Encode all blocks at once using vectorized matrix multiplication.
+        # Use uint16 to safely avoid overflow before the modulo 2 operation.
+        encoded_bits = (bits.astype(np.uint16) @ self.G) % 2
+        encoded_bits = encoded_bits.astype(np.uint8)
+
+        out_bits = encoded_bits.flatten()
         return np.packbits(out_bits, bitorder='little')
 
 

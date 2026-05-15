@@ -233,6 +233,8 @@ def start_gr() -> None:
     samp_rate = gr_cfg.get("samp_rate", 1000000.0)
     carrier_freq = gr_cfg.get("carrier_freq", 2450000000.0)
     band = gr_cfg.get("band", 5000000.0)
+    mod_order = str(current_cfg.get("gnuradio", {}).get("mod_order", 2))
+
 
     proc = subprocess.Popen(
         [
@@ -240,7 +242,8 @@ def start_gr() -> None:
             "--device-address", str(device_address),
             "--samp-rate", str(samp_rate),
             "--carrier-freq", str(carrier_freq),
-            "--band", str(band)
+            "--band", str(band),
+            "--mod-order", int(mod_order)
         ],
         cwd=str(GR_DIR),
         stdout=logf,

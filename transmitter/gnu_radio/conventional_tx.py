@@ -36,7 +36,7 @@ import threading
 
 class conventional_tx(gr.top_block, Qt.QWidget):
 
-    def __init__(self, band=5e6, carrier_freq=2.45e9, mod_order=2, samp_rate=1e6):
+    def __init__(self, band=5e6, carrier_freq=2.45e9, device_address="192.168.1.68", mod_order=2, samp_rate=1e6):
         gr.top_block.__init__(self, "OFDM Transmitter for Conventional SSCC", catch_exceptions=True)
         Qt.QWidget.__init__(self)
         self.setWindowTitle("OFDM Transmitter for Conventional SSCC")
@@ -72,6 +72,7 @@ class conventional_tx(gr.top_block, Qt.QWidget):
         ##################################################
         self.band = band
         self.carrier_freq = carrier_freq
+        self.device_address = device_address
         self.mod_order = mod_order
         self.samp_rate = samp_rate
 
@@ -102,7 +103,7 @@ class conventional_tx(gr.top_block, Qt.QWidget):
         self.zeromq_sub_source_0.set_min_output_buffer(2000000)
         self.zeromq_sub_source_0.set_max_output_buffer(2000000)
         self.uhd_usrp_sink_0 = uhd.usrp_sink(
-            ",".join(("addr=192.168.1.67", '')),
+            ",".join(("addr="+device_address, '')),
             uhd.stream_args(
                 cpu_format="fc32",
                 args='',
@@ -362,6 +363,12 @@ class conventional_tx(gr.top_block, Qt.QWidget):
         self.carrier_freq = carrier_freq
         self.uhd_usrp_sink_0.set_center_freq(self.carrier_freq, 0)
 
+    def get_device_address(self):
+        return self.device_address
+
+    def set_device_address(self, device_address):
+        self.device_address = device_address
+
     def get_mod_order(self):
         return self.mod_order
 
@@ -464,8 +471,14 @@ def argument_parser():
     description = 'OFDM transmitter for conventional separated source-channel coding (SSCC)'
     parser = ArgumentParser(description=description)
     parser.add_argument(
+        "--band", dest="band", type=eng_float, default=eng_notation.num_to_str(float(5e6)),
+        help="Set Band [default=%(default)r]")
+    parser.add_argument(
         "--carrier-freq", dest="carrier_freq", type=eng_float, default=eng_notation.num_to_str(float(2.45e9)),
         help="Set Carrier Frequency [default=%(default)r]")
+    parser.add_argument(
+        "--device-address", dest="device_address", type=str, default="192.168.1.68",
+        help="Set Device IP address  [default=%(default)r]")
     parser.add_argument(
         "--samp-rate", dest="samp_rate", type=eng_float, default=eng_notation.num_to_str(float(1e6)),
         help="Set Sampling Frequency [default=%(default)r]")
@@ -478,7 +491,7 @@ def main(top_block_cls=conventional_tx, options=None):
 
     qapp = Qt.QApplication(sys.argv)
 
-    tb = top_block_cls(carrier_freq=options.carrier_freq, samp_rate=options.samp_rate)
+    tb = top_block_cls(band=options.band, carrier_freq=options.carrier_freq, device_address=options.device_address, samp_rate=options.samp_rate)
 
     tb.start()
     tb.flowgraph_started.set()

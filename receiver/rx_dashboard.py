@@ -144,8 +144,20 @@ def start_rx() -> None:
     if gr_script.is_file():
         GR_LOG_FILE.write_bytes(b"")
         gr_logf = open(GR_LOG_FILE, "ab", buffering=0)
+        
+        gr_cfg = current_cfg.get("gnuradio", {})
+        device_address = gr_cfg.get("rx", {}).get("device_address", "192.168.1.68")
+        samp_rate = gr_cfg.get("samp_rate", 1000000.0)
+        carrier_freq = gr_cfg.get("carrier_freq", 2450000000.0)
+        band = gr_cfg.get("band", 5000000.0)
         gr_proc = subprocess.Popen(
-            [sys.executable, "-u", str(gr_script)],
+            [
+                sys.executable, "-u", str(gr_script), 
+                "--device-address", str(device_address),
+                "--samp-rate", str(samp_rate),
+                "--carrier-freq", str(carrier_freq),
+                "--band", str(band)
+            ],
             cwd=str(GR_DIR),
             stdout=gr_logf,
             stderr=subprocess.STDOUT,

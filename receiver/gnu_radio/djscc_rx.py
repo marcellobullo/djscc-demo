@@ -38,7 +38,7 @@ import threading
 
 class djscc_rx(gr.top_block, Qt.QWidget):
 
-    def __init__(self, band=5e6, carrier_freq=2.45e9, samp_rate=1e6):
+    def __init__(self, band=5e6, carrier_freq=2.45e9, device_address="192.168.1.68", samp_rate=1e6):
         gr.top_block.__init__(self, "OFDM Image Receiver for DJSCC", catch_exceptions=True)
         Qt.QWidget.__init__(self)
         self.setWindowTitle("OFDM Image Receiver for DJSCC")
@@ -74,6 +74,7 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         ##################################################
         self.band = band
         self.carrier_freq = carrier_freq
+        self.device_address = device_address
         self.samp_rate = samp_rate
 
         ##################################################
@@ -101,7 +102,7 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         self.top_layout.addWidget(self._receiver_gain_win)
         self.zeromq_push_msg_sink_0 = zeromq.push_msg_sink('tcp://127.0.0.1:5558', 100, True)
         self.uhd_usrp_source_0_0 = uhd.usrp_source(
-            ",".join(('addr=192.168.1.68', '')),
+            ",".join(("addr="+device_address, '')),
             uhd.stream_args(
                 cpu_format="fc32",
                 args='',
@@ -369,6 +370,12 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         self.qtgui_waterfall_sink_x_0_RX.set_frequency_range(self.carrier_freq, self.samp_rate)
         self.uhd_usrp_source_0_0.set_center_freq(self.carrier_freq, 0)
 
+    def get_device_address(self):
+        return self.device_address
+
+    def set_device_address(self, device_address):
+        self.device_address = device_address
+
     def get_samp_rate(self):
         return self.samp_rate
 
@@ -470,8 +477,14 @@ def argument_parser():
     description = 'OFDM image receiver for deep joint source channel coding (DJSCC)'
     parser = ArgumentParser(description=description)
     parser.add_argument(
+        "--band", dest="band", type=eng_float, default=eng_notation.num_to_str(float(5e6)),
+        help="Set Band [default=%(default)r]")
+    parser.add_argument(
         "--carrier-freq", dest="carrier_freq", type=eng_float, default=eng_notation.num_to_str(float(2.45e9)),
         help="Set Carrier Frequency [default=%(default)r]")
+    parser.add_argument(
+        "--device-address", dest="device_address", type=str, default="192.168.1.68",
+        help="Set Device IP address  [default=%(default)r]")
     parser.add_argument(
         "--samp-rate", dest="samp_rate", type=eng_float, default=eng_notation.num_to_str(float(1e6)),
         help="Set Sampling Frequency [default=%(default)r]")
@@ -484,7 +497,7 @@ def main(top_block_cls=djscc_rx, options=None):
 
     qapp = Qt.QApplication(sys.argv)
 
-    tb = top_block_cls(carrier_freq=options.carrier_freq, samp_rate=options.samp_rate)
+    tb = top_block_cls(band=options.band, carrier_freq=options.carrier_freq, device_address=options.device_address, samp_rate=options.samp_rate)
 
     tb.start()
     tb.flowgraph_started.set()

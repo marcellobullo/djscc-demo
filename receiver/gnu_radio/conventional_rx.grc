@@ -241,7 +241,7 @@ blocks:
     hide: none
     label: Band
     short_id: ''
-    type: ''
+    type: eng_float
     value: 5e6
   states:
     bus_sink: false
@@ -322,6 +322,23 @@ blocks:
     bus_source: false
     bus_structure: null
     coordinate: [208, 8.0]
+    rotation: 0
+    state: enabled
+- name: device_address
+  id: parameter
+  parameters:
+    alias: ''
+    comment: ''
+    hide: none
+    label: 'Device IP address '
+    short_id: ''
+    type: str
+    value: '"192.168.1.68"'
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [576, 12.0]
     rotation: 0
     state: enabled
 - name: digital_constellation_decoder_cb_0
@@ -1190,7 +1207,7 @@ blocks:
     dc_offs_enb7: default
     dc_offs_enb8: default
     dc_offs_enb9: default
-    dev_addr: addr=192.168.1.68
+    dev_addr: '"addr="+device_address'
     dev_args: ''
     gain0: rx_gain
     gain1: '0'

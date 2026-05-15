@@ -17,9 +17,11 @@ gnuradio:
   # Parameters for the transmitting flowgraphs (djscc_tx.grc, conventional_tx.grc)
   tx:
     gain: 18                  # TX Gain (dB). Note: GRC file must use a 'parameter' block for this.
+    device_address: "192.168.1.68"
   # Parameters for the receiving flowgraphs
   rx:
     gain: 20                  # RX Gain (dB). Note: GRC file must use a 'parameter' block for this.
+    device_address: "192.168.1.68"
 
 # --- ZMQ Communication ---
 zmq:

@@ -267,7 +267,7 @@ blocks:
     hide: none
     label: Band
     short_id: ''
-    type: ''
+    type: eng_float
     value: 5e6
   states:
     bus_sink: false
@@ -421,6 +421,23 @@ blocks:
     bus_source: false
     bus_structure: null
     coordinate: [312, 16.0]
+    rotation: 0
+    state: enabled
+- name: device_address
+  id: parameter
+  parameters:
+    alias: ''
+    comment: ''
+    hide: none
+    label: 'Device IP address '
+    short_id: ''
+    type: str
+    value: '"192.168.1.68"'
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [680, 20.0]
     rotation: 0
     state: enabled
 - name: digital_chunks_to_symbols_xx_0
@@ -1084,7 +1101,7 @@ blocks:
     clock_source6: ''
     clock_source7: ''
     comment: ''
-    dev_addr: '"addr=192.168.1.67"'
+    dev_addr: '"addr="+device_address'
     dev_args: ''
     gain0: tx_gain
     gain1: '0'

@@ -636,7 +636,7 @@ blocks:
     hide: none
     label: Bits Per Modulation Symbol
     short_id: ''
-    type: ''
+    type: intx
     value: '2'
   states:
     bus_sink: false

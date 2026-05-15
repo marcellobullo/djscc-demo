@@ -508,6 +508,9 @@ def argument_parser():
         "--device-address", dest="device_address", type=str, default="192.168.1.68",
         help="Set Device IP address  [default=%(default)r]")
     parser.add_argument(
+        "--mod-order", dest="mod_order", type=intx, default=2,
+        help="Set Bits Per Modulation Symbol [default=%(default)r]")
+    parser.add_argument(
         "--samp-rate", dest="samp_rate", type=eng_float, default=eng_notation.num_to_str(float(1e6)),
         help="Set Sampling Frequency [default=%(default)r]")
     return parser
@@ -519,7 +522,7 @@ def main(top_block_cls=conventional_rx, options=None):
 
     qapp = Qt.QApplication(sys.argv)
 
-    tb = top_block_cls(band=options.band, carrier_freq=options.carrier_freq, device_address=options.device_address, samp_rate=options.samp_rate)
+    tb = top_block_cls(band=options.band, carrier_freq=options.carrier_freq, device_address=options.device_address, mod_order=options.mod_order, samp_rate=options.samp_rate)
 
     tb.start()
     tb.flowgraph_started.set()

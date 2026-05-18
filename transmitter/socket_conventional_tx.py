@@ -441,6 +441,12 @@ def publish_bytes_pdu(socket: zmq.Socket, topic: bytes,
             "guaranteed this — check cfg.packet_len / cfg.bits_per_symbol")
     n_pkts = len(payload) // pkt_bytes
     pn_start = _DIRECT_PACKET_COUNTER[0]
+
+    # Pre-serialize all PDUs before sending so the hot send loop has no
+    # Python/PMT overhead per packet.  Without this, PMT object creation
+    # on macOS can stall the sender thread long enough (>idle_gap_s) that
+    # the RX flushes a partial image mid-transmission.
+    serialized = []
     for i in range(n_pkts):
         chunk = payload[i * pkt_bytes:(i + 1) * pkt_bytes]
         meta = pmt.make_dict()
@@ -448,8 +454,11 @@ def publish_bytes_pdu(socket: zmq.Socket, topic: bytes,
                             pmt.from_long(_DIRECT_PACKET_COUNTER[0]))
         vec = pmt.init_u8vector(len(chunk), chunk.tolist())
         pdu = pmt.cons(meta, vec)
-        socket.send(pmt.serialize_str(pdu))
+        serialized.append(pmt.serialize_str(pdu))
         _DIRECT_PACKET_COUNTER[0] += 1
+
+    for s in serialized:
+        socket.send(s)
     tag = f" [{label}]" if label else ""
     print(f"  TX direct-PDU push {n_pkts} pkts × {pkt_bytes} B "
           f"(pn {pn_start}..{_DIRECT_PACKET_COUNTER[0] - 1}, "

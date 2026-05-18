@@ -223,6 +223,7 @@ class LDPCBatchDecoder:
             
             self.decoder.update_channel_probs(probs)
             syndrome = self.H.dot(y_hard) % 2
+            #syndrome = (self.H.dot(y_hard.astype(np.int32)) % 2).astype(np.uint8)
             error_vector = self.decoder.decode(syndrome)
             codeword = (y_hard + error_vector) % 2
             decoded_bits_2d[i] = codeword[self.info_bits]
@@ -259,6 +260,7 @@ class LDPCBatchDecoder:
             
             self.decoder.update_channel_probs(probs)
             syndrome = self.H.dot(y_hard) % 2
+            #syndrome = (self.H.dot(y_hard.astype(np.int32)) % 2).astype(np.uint8)
             error_vector = self.decoder.decode(syndrome)
             codeword = (y_hard + error_vector) % 2
             decoded_bits_2d[i] = codeword[self.info_bits]
@@ -289,7 +291,7 @@ def _try_jpeg_recovery(data_bytes):
     try:
         jpeg_start = data_bytes.find(b'\xff\xd8')
         if jpeg_start == -1:
-            return False
+            return None
         jpeg_end = data_bytes.rfind(b'\xff\xd9')
         if jpeg_end == -1:
             jpeg_data = data_bytes[jpeg_start:]
@@ -309,7 +311,7 @@ def _try_png_recovery(data_bytes):
         png_signature = b'\x89PNG\r\n\x1a\n'
         png_start = data_bytes.find(png_signature)
         if png_start == -1:
-            return False
+            return None
         png_data = data_bytes[png_start:]
         img_bytes = io.BytesIO(png_data)
         img = Image.open(img_bytes)
@@ -354,11 +356,12 @@ def decompress_to_bgr(payload: bytes,
         except Exception as e:
             print(f"  [!] PIL could not decode payload: {e}")
             try:
-                img = _attempt_image_recovery(trimmed_data_bytes)
+                img = _attempt_image_recovery(trimmed)
             except Exception as e2:
                 print(f"  [!] Image recovery also failed: {e2}")
                 return None
-            return None
+            if img is None:
+                return None
 
     if img.mode != "RGB":
         img = img.convert("RGB")
@@ -505,6 +508,8 @@ def receive_loop(socket: zmq.Socket,
         cv2.putText(display, f"#{n_decoded_ok} / {n_total}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
         cv2.imshow(cfg.window_title, display)
+        # if (cv2.waitKey(1) & 0xFF) == ord('q'):
+        #     raise KeyboardInterrupt
 
     def _reset_image_state(*, keep_anchor: bool):
         nonlocal pkt_seen, slot_buf, current_image_idx, anchor_pn

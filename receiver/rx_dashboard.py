@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -31,10 +32,12 @@ GR_LOG_FILE = Path("/tmp/djscc_rx_gr.log")
 PY_PID_FILE = Path("/tmp/djscc_rx_py.pid")
 PY_LOG_FILE = Path("/tmp/djscc_rx_py.log")
 TMP_CONFIG_PATH = Path("/tmp/tmp_rx_config.yaml")
+TMP_RX_DIR = Path("/tmp/djscc_rx_tmp")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GR_DIR = REPO_ROOT / "receiver" / "gnu_radio"
 RX_DIR = REPO_ROOT / "receiver"
+CAPTURES_DIR = REPO_ROOT / "receiver" / "captures"
 CONFIG_PATH = REPO_ROOT / "config.yaml"
 
 def load_base_config():
@@ -172,14 +175,21 @@ def start_rx() -> None:
     PY_LOG_FILE.write_bytes(b"")
     py_logf = open(PY_LOG_FILE, "ab", buffering=0)
 
+    output_dir = TMP_RX_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for f in output_dir.glob("*"):
+        if f.is_file():
+            try:
+                f.unlink()
+            except:
+                pass
+
     if mode == "DJSCC":
         py_script = RX_DIR / "socket_djscc_rx.py"
         model_path_str = current_cfg["djscc"]["model_path"]
         model_path_full = Path(model_path_str)
         if not model_path_full.is_absolute():
             model_path_full = REPO_ROOT / model_path_full
-
-        output_dir = REPO_ROOT / current_cfg["djscc"]["rx"].get("output_dir", "./received_images_djscc")
         
         cmd = [
             sys.executable, "-u", str(py_script),
@@ -199,7 +209,6 @@ def start_rx() -> None:
             cmd.append("--quantize-cpu")
     else:
         py_script = RX_DIR / "socket_conventional_rx.py"
-        output_dir = REPO_ROOT / current_cfg["conventional"].get("output_dir", "./received_images_conventional")
         
         cmd = [
             sys.executable, "-u", str(py_script),
@@ -324,12 +333,7 @@ with st.sidebar:
 with tab_demo:
     current_cfg = get_current_config(load_base_config())
     rx_mode_val = st.session_state.get("rx_mode", "DJSCC")
-    
-    if rx_mode_val == "DJSCC":
-        out_dir = REPO_ROOT / current_cfg["djscc"]["rx"].get("output_dir", "./received_images_djscc")
-    else:
-        out_dir = REPO_ROOT / current_cfg["conventional"].get("output_dir", "./received_images_conventional")
-
+    out_dir = TMP_RX_DIR
     col_img, col_side = st.columns([3, 2])
     
     with col_img:
@@ -340,19 +344,31 @@ with tab_demo:
             try:
                 img_bytes = latest_img_path.read_bytes()
                 st.image(img_bytes, use_container_width=True)
+
+                for f in out_dir.glob("*"):
+                    if f.is_file() and f.name != latest_img_path.name:
+                        try:
+                            f.unlink()
+                        except:
+                            pass
             except Exception as e:
                 st.error(f"Error loading image: {e}")
         else:
-            st.info(f"No images received yet in `{out_dir}`. Waiting for transmission...")
+            st.info(f"No images received yet. Waiting for transmission...")
             
     with col_side:
         st.subheader("Status")
         st.button("↻ Refresh Image", use_container_width=True)
         if latest_img_path:
             st.success("Image received!")
-            st.caption(f"**File:** `{latest_img_path.name}`")
             st.caption(f"**Time:** {time.strftime('%H:%M:%S', time.localtime(latest_img_path.stat().st_mtime))}")
-            st.caption(f"**Directory:** `{out_dir}`")
+
+            if st.button("💾 Save image", use_container_width=True, type="primary"):
+                CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
+                save_path = CAPTURES_DIR / latest_img_path.name
+                shutil.copy2(latest_img_path, save_path)
+                st.toast(f"Saved {save_path.name}", icon="💾")
+                st.caption(f"Saved to `{save_path}`")
         
         st.divider()
         st.markdown("**Note:**")

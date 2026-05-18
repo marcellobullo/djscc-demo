@@ -154,15 +154,19 @@ def start_rx() -> None:
         carrier_freq = gr_cfg.get("carrier_freq", 2450000000.0)
         band = gr_cfg.get("band", 5000000.0)
         mod_order = current_cfg.get("gnuradio", {}).get("mod_order", 2)
+        
+        cmd_args = [
+            sys.executable, "-u", str(gr_script), 
+            "--device-address", str(device_address),
+            "--samp-rate", str(samp_rate),
+            "--carrier-freq", str(carrier_freq),
+            "--band", str(band)
+        ]
+        if mode != "DJSCC":
+            cmd_args.extend(["--mod-order", str(mod_order)])
+            
         gr_proc = subprocess.Popen(
-            [
-                sys.executable, "-u", str(gr_script), 
-                "--device-address", str(device_address),
-                "--samp-rate", str(samp_rate),
-                "--carrier-freq", str(carrier_freq),
-                "--band", str(band),
-                "--mod-order", str(mod_order)
-            ],
+            cmd_args,
             cwd=str(GR_DIR),
             stdout=gr_logf,
             stderr=subprocess.STDOUT,

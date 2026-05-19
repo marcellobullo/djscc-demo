@@ -247,7 +247,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [520, 12.0]
+    coordinate: [520, 8.0]
     rotation: 0
     state: enabled
 - name: blocks_delay_0
@@ -338,7 +338,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [576, 12.0]
+    coordinate: [576, 8.0]
     rotation: 0
     state: enabled
 - name: digital_constellation_decoder_cb_0
@@ -637,12 +637,12 @@ blocks:
     label: Bits Per Modulation Symbol
     short_id: ''
     type: intx
-    value: '2'
+    value: '1'
   states:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [408, 12.0]
+    coordinate: [408, 8.0]
     rotation: 0
     state: enabled
 - name: pdu_tagged_stream_to_pdu_0

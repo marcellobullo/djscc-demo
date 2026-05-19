@@ -31,6 +31,8 @@ from gnuradio import gr, pdu
 from gnuradio import uhd
 import time
 from gnuradio import zeromq
+import djscc_rx_chan_taps_logger_0 as chan_taps_logger_0  # embedded python block
+import djscc_rx_pilot_snr_logger_0 as pilot_snr_logger_0  # embedded python block
 import sip
 import threading
 
@@ -285,6 +287,7 @@ class djscc_rx(gr.top_block, Qt.QWidget):
 
         self._qtgui_const_sink_x_0_win = sip.wrapinstance(self.qtgui_const_sink_x_0.qwidget(), Qt.QWidget)
         self.top_layout.addWidget(self._qtgui_const_sink_x_0_win)
+        self.pilot_snr_logger_0 = pilot_snr_logger_0.blk(fft_len=fft_len, pilot_positions=[11, 25, 39, 53], pilot_symbols=[1.0, 1.0, 1.0, -1.0], out_path="/tmp/pilot_dataset.npz", flush_every=200)
         self.pdu_tagged_stream_to_pdu_0 = pdu.tagged_stream_to_pdu(gr.types.complex_t, "packet_len")
         self.fft_vxx_1 = fft.fft_vcc(fft_len, True, (), True, 1)
         self.fft_vxx_0_0 = fft.fft_vcc(fft_len, True, (), True, 1)
@@ -311,6 +314,7 @@ class djscc_rx(gr.top_block, Qt.QWidget):
             0)
         self.digital_header_payload_demux_0.set_min_output_buffer(2000000)
         self.digital_constellation_decoder_cb_0 = digital.constellation_decoder_cb(header_mod.base())
+        self.chan_taps_logger_0 = chan_taps_logger_0.blk(fft_len=fft_len, packet_len=packet_len, out_path="/tmp/h_dataset.npz", flush_every=200)
         self.blocks_multiply_xx_0 = blocks.multiply_vcc(1)
         self.blocks_multiply_const_vxx_0_1 = blocks.multiply_const_cc(1)
         self.blocks_delay_0 = blocks.delay(gr.sizeof_gr_complex*1, (fft_len+int(fft_len/4)))
@@ -320,6 +324,7 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         ##################################################
         # Connections
         ##################################################
+        self.msg_connect((self.digital_packet_headerparser_b_0_0, 'header_data'), (self.chan_taps_logger_0, 'header_valid'))
         self.msg_connect((self.digital_packet_headerparser_b_0_0, 'header_data'), (self.digital_header_payload_demux_0, 'header_data'))
         self.msg_connect((self.pdu_tagged_stream_to_pdu_0, 'pdus'), (self.zeromq_push_msg_sink_0, 'in'))
         self.connect((self.analog_frequency_modulator_fc_0, 0), (self.blocks_multiply_xx_0, 1))
@@ -327,12 +332,14 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         self.connect((self.blocks_multiply_const_vxx_0_1, 0), (self.pdu_tagged_stream_to_pdu_0, 0))
         self.connect((self.blocks_multiply_const_vxx_0_1, 0), (self.qtgui_const_sink_x_0, 0))
         self.connect((self.blocks_multiply_xx_0, 0), (self.digital_header_payload_demux_0, 0))
+        self.connect((self.chan_taps_logger_0, 0), (self.digital_ofdm_frame_equalizer_vcvc_0, 0))
         self.connect((self.digital_constellation_decoder_cb_0, 0), (self.digital_packet_headerparser_b_0_0, 0))
         self.connect((self.digital_header_payload_demux_0, 0), (self.fft_vxx_0_0, 0))
         self.connect((self.digital_header_payload_demux_0, 1), (self.fft_vxx_1, 0))
-        self.connect((self.digital_ofdm_chanest_vcvc_0, 0), (self.digital_ofdm_frame_equalizer_vcvc_0, 0))
+        self.connect((self.digital_ofdm_chanest_vcvc_0, 0), (self.chan_taps_logger_0, 0))
         self.connect((self.digital_ofdm_frame_equalizer_vcvc_0, 0), (self.digital_ofdm_serializer_vcc_header, 0))
         self.connect((self.digital_ofdm_frame_equalizer_vcvc_1, 0), (self.digital_ofdm_serializer_vcc_payload, 0))
+        self.connect((self.digital_ofdm_frame_equalizer_vcvc_1, 0), (self.pilot_snr_logger_0, 0))
         self.connect((self.digital_ofdm_serializer_vcc_header, 0), (self.digital_constellation_decoder_cb_0, 0))
         self.connect((self.digital_ofdm_serializer_vcc_payload, 0), (self.blocks_multiply_const_vxx_0_1, 0))
         self.connect((self.digital_ofdm_sync_sc_cfb_0, 0), (self.analog_frequency_modulator_fc_0, 0))
@@ -408,6 +415,7 @@ class djscc_rx(gr.top_block, Qt.QWidget):
     def set_packet_len(self, packet_len):
         self.packet_len = packet_len
         self.set_header_formatter_rx(deepjscc.packet_header_ofdm_wide(self.occupied_carriers, n_syms=1, len_tag_key="packet_len",   frame_len_tag_key="frame_len", num_tag_key="packet_num", bits_per_header_sym=header_mod.bits_per_symbol(), bits_per_payload_sym=8, scramble_header=True,  expected_packet_len=self.packet_len))
+        self.chan_taps_logger_0.packet_len = self.packet_len
 
     def get_occupied_carriers(self):
         return self.occupied_carriers
@@ -433,6 +441,8 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         self.set_payload_equalizer(digital.ofdm_equalizer_static(self.fft_len, self.occupied_carriers, self.pilot_carriers, self.pilot_symbols))
         self.analog_frequency_modulator_fc_0.set_sensitivity((-2.0/self.fft_len))
         self.blocks_delay_0.set_dly(int((self.fft_len+int(self.fft_len/4))))
+        self.chan_taps_logger_0.fft_len = self.fft_len
+        self.pilot_snr_logger_0.fft_len = self.fft_len
 
     def get_sync_word2(self):
         return self.sync_word2

@@ -236,6 +236,9 @@ def start_rx() -> None:
         if current_cfg["conventional"].get("interleave", False):
             cmd.append("--interleave")
 
+    print("#"*20)
+    print("CMD:", cmd)
+    print("#"*20)
     if py_script.is_file():
         py_proc = subprocess.Popen(
             cmd,

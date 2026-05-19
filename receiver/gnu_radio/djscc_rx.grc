@@ -230,7 +230,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [200, 148.0]
+    coordinate: [200, 144.0]
     rotation: 0
     state: enabled
 - name: blocks_delay_0
@@ -265,7 +265,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1936, 580.0]
+    coordinate: [2016, 612.0]
     rotation: 0
     state: disabled
 - name: blocks_multiply_const_vxx_0_1
@@ -283,7 +283,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1328, 788.0]
+    coordinate: [1328, 988.0]
     rotation: 0
     state: enabled
 - name: blocks_multiply_xx_0
@@ -321,6 +321,85 @@ blocks:
     coordinate: [0, 144.0]
     rotation: 0
     state: enabled
+- name: chan_taps_logger_0
+  id: epy_block
+  parameters:
+    _source_code: "\"\"\"Header-gated channel-tap logger with packet_len validation.\n\
+      \nSits between digital_ofdm_chanest_vcvc and digital_ofdm_frame_equalizer_vcvc.\n\
+      Passes vectors through unchanged. For every input item, reads any\nofdm_sync_chan_taps\
+      \ stream tags and appends the complex vector to a\npending buffer. On every\
+      \ header_valid PDU, parses the header's\npacket_len field; only if it exactly\
+      \ equals the expected packet_len\n(e.g. 960) AND packet_num is in a sane 24-bit\
+      \ non-negative range does\nit commit the most-recent pending h (and its packet_num)\
+      \ to permanent\nstorage. Otherwise the message is treated as a spurious sync.\n\
+      \nOutput: .npz with two aligned arrays:\n  - packet_num: int64 (N,)\n  - h:\
+      \          complex64 (N, fft_len)\nUse packet_num to merge with pilot_snr_logger\
+      \ output offline.\n\nWire the 'header_data' output of digital_packet_headerparser_b\
+      \ to the\n'header_valid' input of this block (parallel to its existing\nconnection\
+      \ to digital_header_payload_demux_0).\n\"\"\"\n\nimport threading\nimport numpy\
+      \ as np\nimport pmt\nfrom gnuradio import gr\n\n\nclass blk(gr.sync_block):\n\
+      \    def __init__(self, fft_len=64, packet_len=960,\n                 out_path='/tmp/h_dataset.npz',\
+      \ flush_every=200):\n        gr.sync_block.__init__(\n            self,\n  \
+      \          name='chan_taps_logger',\n            in_sig=[(np.complex64, fft_len)],\n\
+      \            out_sig=[(np.complex64, fft_len)],\n        )\n        self.fft_len\
+      \ = int(fft_len)\n        self.packet_len = int(packet_len)\n        self.out_path\
+      \ = str(out_path)\n        self.flush_every = int(flush_every)\n        self.tag_key\
+      \ = pmt.intern('ofdm_sync_chan_taps')\n        self.pkt_num_key = pmt.intern('packet_num')\n\
+      \        self.pkt_len_key = pmt.intern('packet_len')\n        self.pending =\
+      \ []\n        self.max_pending = 8\n        self.pn_list = []\n        self.h_list\
+      \ = []\n        self.n_rejected = 0\n        self._lock = threading.Lock()\n\
+      \        self.msg_port = pmt.intern('header_valid')\n        self.message_port_register_in(self.msg_port)\n\
+      \        self.set_msg_handler(self.msg_port, self._on_header_valid)\n\n    def\
+      \ _extract_int(self, msg, key):\n        \"\"\"Robust int extraction. A PMT\
+      \ dict is internally a list of pairs, so\n        is_pair() can't reliably distinguish\
+      \ dict vs (meta, payload) pair.\"\"\"\n        sentinel = pmt.from_long(-(1\
+      \ << 30))\n        candidates = [msg]\n        try:\n            if pmt.is_pair(msg):\n\
+      \                candidates.append(pmt.car(msg))\n        except Exception:\n\
+      \            pass\n        for cand in candidates:\n            try:\n     \
+      \           val = pmt.dict_ref(cand, key, sentinel)\n                if not\
+      \ pmt.equal(val, sentinel):\n                    return pmt.to_long(val)\n \
+      \           except Exception:\n                continue\n        return None\n\
+      \n    def _on_header_valid(self, msg):\n        pl = self._extract_int(msg,\
+      \ self.pkt_len_key)\n        pn = self._extract_int(msg, self.pkt_num_key)\n\
+      \        if pl != self.packet_len or pn is None or pn < 0 or pn >= (1 << 24):\n\
+      \            self.n_rejected += 1\n            return\n        with self._lock:\n\
+      \            if not self.pending:\n                return\n            self.h_list.append(self.pending[-1])\n\
+      \            self.pn_list.append(int(pn))\n            self.pending.clear()\n\
+      \            if len(self.pn_list) % self.flush_every == 0:\n               \
+      \ self._flush()\n\n    def _flush(self):\n        if not self.pn_list:\n   \
+      \         return\n        np.savez(self.out_path,\n                 packet_num=np.array(self.pn_list,\
+      \ dtype=np.int64),\n                 h=np.array(self.h_list, dtype=np.complex64))\n\
+      \n    def work(self, input_items, output_items):\n        in0 = input_items[0]\n\
+      \        out0 = output_items[0]\n        out0[:] = in0\n        n = len(in0)\n\
+      \        for tag in self.get_tags_in_window(0, 0, n, self.tag_key):\n      \
+      \      taps = np.array(pmt.c32vector_elements(tag.value), dtype=np.complex64)\n\
+      \            with self._lock:\n                self.pending.append(taps)\n \
+      \               if len(self.pending) > self.max_pending:\n                 \
+      \   self.pending = self.pending[-self.max_pending:]\n        return n\n\n  \
+      \  def stop(self):\n        with self._lock:\n            self._flush()\n  \
+      \      print('[chan_taps_logger] committed=%d rejected=%d -> %s'\n         \
+      \     % (len(self.pn_list), self.n_rejected, self.out_path))\n        return\
+      \ True\n"
+    affinity: ''
+    alias: ''
+    comment: Logs per-frame (packet_num, h) to .npz (header-gated, packet_len validated)
+    fft_len: fft_len
+    flush_every: '200'
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    out_path: '"/tmp/h_dataset.npz"'
+    packet_len: packet_len
+  states:
+    _io_cache: ('chan_taps_logger', 'blk', [('fft_len', '64'), ('packet_len', '960'),
+      ('out_path', "'/tmp/h_dataset.npz'"), ('flush_every', '200')], [('0', 'complex',
+      64), ('header_valid', 'message', 1)], [('0', 'complex', 64)], '', ['fft_len',
+      'flush_every', 'out_path', 'packet_len'])
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [1120, 524.0]
+    rotation: 0
+    state: enabled
 - name: device_address
   id: parameter
   parameters:
@@ -335,7 +414,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [256, 148.0]
+    coordinate: [256, 144.0]
     rotation: 0
     state: enabled
 - name: digital_constellation_decoder_cb_0
@@ -351,7 +430,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1448, 540.0]
+    coordinate: [1680, 540.0]
     rotation: 0
     state: enabled
 - name: digital_header_payload_demux_0
@@ -379,7 +458,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1920, 380.0]
+    coordinate: [2128, 380.0]
     rotation: 0
     state: enabled
 - name: digital_ofdm_chanest_vcvc_0
@@ -400,7 +479,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [864, 520.0]
+    coordinate: [856, 504.0]
     rotation: 0
     state: enabled
 - name: digital_ofdm_frame_equalizer_vcvc_0
@@ -421,7 +500,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1088, 516.0]
+    coordinate: [1320, 516.0]
     rotation: 0
     state: enabled
 - name: digital_ofdm_frame_equalizer_vcvc_1
@@ -442,7 +521,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [928, 768.0]
+    coordinate: [928, 968.0]
     rotation: 0
     state: enabled
 - name: digital_ofdm_serializer_vcc_header
@@ -464,7 +543,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1264, 532.0]
+    coordinate: [1496, 532.0]
     rotation: 0
     state: enabled
 - name: digital_ofdm_serializer_vcc_payload
@@ -486,7 +565,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1136, 768.0]
+    coordinate: [1136, 968.0]
     rotation: 0
     state: enabled
 - name: digital_ofdm_sync_sc_cfb_0
@@ -521,7 +600,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1656, 540.0]
+    coordinate: [1888, 540.0]
     rotation: 0
     state: enabled
 - name: digital_probe_mpsk_snr_est_c_0
@@ -539,7 +618,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1448, 588.0]
+    coordinate: [1680, 612.0]
     rotation: 0
     state: disabled
 - name: fft_vxx_0_0
@@ -560,7 +639,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [696, 520.0]
+    coordinate: [696, 504.0]
     rotation: 0
     state: enabled
 - name: fft_vxx_1
@@ -581,7 +660,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [728, 768.0]
+    coordinate: [728, 968.0]
     rotation: 0
     state: enabled
 - name: import_deepjscc
@@ -611,7 +690,87 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1488, 732.0]
+    coordinate: [1488, 932.0]
+    rotation: 0
+    state: enabled
+- name: pilot_snr_logger_0
+  id: epy_block
+  parameters:
+    _source_code: "\"\"\"Per-frame equalized-pilot logger for offline SNR estimation.\n\
+      \nSink block. Tap the output of digital_ofdm_frame_equalizer_vcvc_1\n(post-equalization\
+      \ OFDM vectors of length fft_len). Frames are\ndelimited by packet_num and frame_len\
+      \ stream tags placed on the\nfirst OFDM symbol of each frame by the demux. For\
+      \ every frame,\nextracts the pilot subcarrier values from every OFDM symbol,\n\
+      averages them, and saves to a .npz file alongside packet_num.\n\nThe demux only\
+      \ emits payload symbols for headers that successfully\nparsed, so all frames\
+      \ seen here correspond to validated frames -\nno extra validation is needed.\n\
+      \nOffline, combine with chan_taps_logger output by packet_num and\ncompute SNR\
+      \ per frame:\n    n_eq = mean_pilots - known_pilots\n    sigma2 = mean(|n_eq|^2)\n\
+      \    snr_post_eq = 1.0 / sigma2\n\"\"\"\n\nimport threading\nimport numpy as\
+      \ np\nimport pmt\nfrom gnuradio import gr\n\n\nclass blk(gr.sync_block):\n \
+      \   def __init__(self, fft_len=64,\n                 pilot_positions=[11, 25,\
+      \ 39, 53],\n                 pilot_symbols=[1.0, 1.0, 1.0, -1.0],\n        \
+      \         out_path='/tmp/pilot_dataset.npz',\n                 flush_every=200):\n\
+      \        gr.sync_block.__init__(\n            self,\n            name='pilot_snr_logger',\n\
+      \            in_sig=[(np.complex64, fft_len)],\n            out_sig=None,\n\
+      \        )\n        self.fft_len = int(fft_len)\n        self.pilot_positions\
+      \ = np.array(pilot_positions, dtype=np.int64)\n        self.pilot_symbols =\
+      \ np.array(pilot_symbols, dtype=np.complex64)\n        self.out_path = str(out_path)\n\
+      \        self.flush_every = int(flush_every)\n        self.pkt_num_key = pmt.intern('packet_num')\n\
+      \        self.frame_len_key = pmt.intern('frame_len')\n\n        self._curr_pn\
+      \ = None\n        self._curr_fl = 0\n        self._curr_consumed = 0\n     \
+      \   self._curr_pilots = []\n\n        self.pn_list = []\n        self.mean_pilots_list\
+      \ = []\n        self.sigma2_list = []\n        self._lock = threading.Lock()\n\
+      \n    def work(self, input_items, output_items):\n        in0 = input_items[0]\n\
+      \        n = len(in0)\n        nread = self.nitems_read(0)\n\n        tag_map\
+      \ = {}\n        for tag in self.get_tags_in_window(0, 0, n, self.pkt_num_key):\n\
+      \            tag_map.setdefault(int(tag.offset - nread), {})['pn'] = pmt.to_long(tag.value)\n\
+      \        for tag in self.get_tags_in_window(0, 0, n, self.frame_len_key):\n\
+      \            tag_map.setdefault(int(tag.offset - nread), {})['fl'] = pmt.to_long(tag.value)\n\
+      \n        for i in range(n):\n            if i in tag_map:\n               \
+      \ self._finalize_frame()\n                info = tag_map[i]\n              \
+      \  self._curr_pn = info.get('pn')\n                self._curr_fl = info.get('fl',\
+      \ 0)\n                self._curr_consumed = 0\n                self._curr_pilots\
+      \ = []\n            if self._curr_pn is not None and self._curr_consumed < self._curr_fl:\n\
+      \                self._curr_pilots.append(in0[i][self.pilot_positions])\n  \
+      \              self._curr_consumed += 1\n                if self._curr_consumed\
+      \ >= self._curr_fl:\n                    self._finalize_frame()\n        return\
+      \ n\n\n    def _finalize_frame(self):\n        if self._curr_pn is None or not\
+      \ self._curr_pilots:\n            self._curr_pn = None\n            self._curr_pilots\
+      \ = []\n            self._curr_consumed = 0\n            self._curr_fl = 0\n\
+      \            return\n        arr = np.array(self._curr_pilots, dtype=np.complex64)\n\
+      \        mean_p = arr.mean(axis=0)\n        n_eq = arr - self.pilot_symbols[None,\
+      \ :]\n        sigma2 = float(np.mean(np.abs(n_eq) ** 2))\n        with self._lock:\n\
+      \            self.pn_list.append(int(self._curr_pn))\n            self.mean_pilots_list.append(mean_p)\n\
+      \            self.sigma2_list.append(sigma2)\n            if len(self.pn_list)\
+      \ % self.flush_every == 0:\n                self._flush()\n        self._curr_pn\
+      \ = None\n        self._curr_pilots = []\n        self._curr_consumed = 0\n\
+      \        self._curr_fl = 0\n\n    def _flush(self):\n        if not self.pn_list:\n\
+      \            return\n        np.savez(self.out_path,\n                 packet_num=np.array(self.pn_list,\
+      \ dtype=np.int64),\n                 mean_pilots=np.array(self.mean_pilots_list,\
+      \ dtype=np.complex64),\n                 sigma2=np.array(self.sigma2_list, dtype=np.float32))\n\
+      \n    def stop(self):\n        with self._lock:\n            self._flush()\n\
+      \        print('[pilot_snr_logger] saved %d frames -> %s'\n              % (len(self.pn_list),\
+      \ self.out_path))\n        return True\n"
+    affinity: ''
+    alias: ''
+    comment: Per-frame equalized pilot logger for SNR estimation
+    fft_len: fft_len
+    flush_every: '200'
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    out_path: '"/tmp/pilot_dataset.npz"'
+    pilot_positions: '[11, 25, 39, 53]'
+    pilot_symbols: '[1.0, 1.0, 1.0, -1.0]'
+  states:
+    _io_cache: ('pilot_snr_logger', 'blk', [('fft_len', '64'), ('pilot_positions',
+      '[11, 25, 39, 53]'), ('pilot_symbols', '[1.0, 1.0, 1.0, -1.0]'), ('out_path',
+      "'/tmp/pilot_dataset.npz'"), ('flush_every', '200')], [('0', 'complex', 64)],
+      [], '', ['fft_len', 'flush_every', 'out_path', 'pilot_positions', 'pilot_symbols'])
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [1136, 1080.0]
     rotation: 0
     state: enabled
 - name: qtgui_const_sink_x_0
@@ -703,7 +862,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1488, 844.0]
+    coordinate: [1488, 1044.0]
     rotation: 0
     state: enabled
 - name: qtgui_const_sink_x_0_0
@@ -795,7 +954,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1448, 468.0]
+    coordinate: [1680, 468.0]
     rotation: 0
     state: disabled
 - name: qtgui_freq_sink_x_0_RX
@@ -1500,7 +1659,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [2216, 388.0]
+    coordinate: [2424, 388.0]
     rotation: 0
     state: enabled
 - name: virtual_sink_1
@@ -1513,7 +1672,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [2216, 460.0]
+    coordinate: [2424, 460.0]
     rotation: 0
     state: enabled
 - name: virtual_sink_1_0_0
@@ -1526,7 +1685,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1512, 788.0]
+    coordinate: [1512, 988.0]
     rotation: 0
     state: enabled
 - name: virtual_source_0_1
@@ -1539,7 +1698,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [520, 540.0]
+    coordinate: [520, 524.0]
     rotation: 0
     state: enabled
 - name: virtual_source_1_0
@@ -1552,7 +1711,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [520, 788.0]
+    coordinate: [520, 988.0]
     rotation: 0
     state: enabled
 - name: zeromq_pub_msg_sink_0
@@ -1568,7 +1727,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1688, 656.0]
+    coordinate: [1688, 848.0]
     rotation: 0
     state: disabled
 - name: zeromq_push_msg_sink_0
@@ -1584,7 +1743,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1688, 728.0]
+    coordinate: [1688, 928.0]
     rotation: 0
     state: enabled
 - name: zeromq_push_sink_0
@@ -1604,7 +1763,7 @@ blocks:
     bus_sink: false
     bus_source: false
     bus_structure: null
-    coordinate: [1136, 656.0]
+    coordinate: [1136, 856.0]
     rotation: 0
     state: disabled
 
@@ -1615,13 +1774,15 @@ connections:
 - [blocks_multiply_const_vxx_0_1, '0', qtgui_const_sink_x_0, '0']
 - [blocks_multiply_const_vxx_0_1, '0', virtual_sink_1_0_0, '0']
 - [blocks_multiply_xx_0, '0', digital_header_payload_demux_0, '0']
+- [chan_taps_logger_0, '0', digital_ofdm_frame_equalizer_vcvc_0, '0']
 - [digital_constellation_decoder_cb_0, '0', digital_packet_headerparser_b_0_0, '0']
 - [digital_header_payload_demux_0, '0', virtual_sink_0_1, '0']
 - [digital_header_payload_demux_0, '1', virtual_sink_1, '0']
-- [digital_ofdm_chanest_vcvc_0, '0', digital_ofdm_frame_equalizer_vcvc_0, '0']
+- [digital_ofdm_chanest_vcvc_0, '0', chan_taps_logger_0, '0']
 - [digital_ofdm_frame_equalizer_vcvc_0, '0', digital_ofdm_serializer_vcc_header, '0']
 - [digital_ofdm_frame_equalizer_vcvc_1, '0', digital_ofdm_serializer_vcc_payload,
   '0']
+- [digital_ofdm_frame_equalizer_vcvc_1, '0', pilot_snr_logger_0, '0']
 - [digital_ofdm_frame_equalizer_vcvc_1, '0', zeromq_push_sink_0, '0']
 - [digital_ofdm_serializer_vcc_header, '0', digital_constellation_decoder_cb_0, '0']
 - [digital_ofdm_serializer_vcc_header, '0', digital_probe_mpsk_snr_est_c_0, '0']
@@ -1629,6 +1790,7 @@ connections:
 - [digital_ofdm_serializer_vcc_payload, '0', blocks_multiply_const_vxx_0_1, '0']
 - [digital_ofdm_sync_sc_cfb_0, '0', analog_frequency_modulator_fc_0, '0']
 - [digital_ofdm_sync_sc_cfb_0, '1', digital_header_payload_demux_0, '1']
+- [digital_packet_headerparser_b_0_0, header_data, chan_taps_logger_0, header_valid]
 - [digital_packet_headerparser_b_0_0, header_data, digital_header_payload_demux_0,
   header_data]
 - [digital_probe_mpsk_snr_est_c_0, snr, blocks_message_debug_0, log]

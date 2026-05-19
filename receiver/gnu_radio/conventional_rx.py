@@ -39,7 +39,7 @@ import threading
 
 class conventional_rx(gr.top_block, Qt.QWidget):
 
-    def __init__(self, band=5e6, carrier_freq=2.45e9, device_address="192.168.1.68", mod_order=2, samp_rate=1e6):
+    def __init__(self, band=5e6, carrier_freq=2.45e9, device_address="192.168.1.68", mod_order=1, samp_rate=1e6):
         gr.top_block.__init__(self, "OFDM Receiver for Conventional SSCC", catch_exceptions=True)
         Qt.QWidget.__init__(self)
         self.setWindowTitle("OFDM Receiver for Conventional SSCC")
@@ -508,7 +508,7 @@ def argument_parser():
         "--device-address", dest="device_address", type=str, default="192.168.1.68",
         help="Set Device IP address  [default=%(default)r]")
     parser.add_argument(
-        "--mod-order", dest="mod_order", type=intx, default=2,
+        "--mod-order", dest="mod_order", type=intx, default=1,
         help="Set Bits Per Modulation Symbol [default=%(default)r]")
     parser.add_argument(
         "--samp-rate", dest="samp_rate", type=eng_float, default=eng_notation.num_to_str(float(1e6)),

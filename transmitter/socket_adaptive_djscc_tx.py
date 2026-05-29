@@ -77,6 +77,46 @@ class TxConfig:
     port: str
     topic: bytes
     direct_zmq: bool
+    interleave: bool = False
+
+
+# ── Symbol interleaver ──────────────────────────────────────────────────────
+# Block interleaver over the padded complex-symbol stream — same construction
+# as socket_conventional_tx.py's bit interleaver, applied to symbols instead.
+# Symbols are laid out as a (num_slots x packet_len) matrix filled row-by-row
+# and read column-by-column, so each OFDM packet ends up carrying one symbol
+# from every original packet-strip of the latent.  A lost / weak packet then
+# scatters its damage uniformly across the whole latent (diffuse speckle)
+# instead of wiping one contiguous strip (a visible band).  The RX applies the
+# inverse permutation before handing the latent to the decoder.  Must match
+# --interleave on the RX.
+def _make_interleaver(num_items: int, num_slots: int):
+    """Return (perm_fwd, perm_inv) for a block interleaver over num_items.
+
+      perm_fwd[src_pos] = tx_pos   — apply at RX: latent = rx[perm_fwd]
+      perm_inv[tx_pos]  = src_pos  — apply at TX: tx    = latent[perm_inv]
+    """
+    bps = num_items // num_slots  # == packet_len when num_items = n_pkts*pkt_len
+    p = np.arange(num_items, dtype=np.int64)
+    perm_fwd = (p % num_slots) * bps + (p // num_slots)
+    perm_inv = np.empty(num_items, dtype=np.int64)
+    perm_inv[perm_fwd] = p
+    return perm_fwd, perm_inv
+
+
+_INTERLEAVE_CACHE: dict = {}
+
+
+def _interleave_symbols(symbols: np.ndarray, packet_len: int) -> np.ndarray:
+    """Apply the TX-side (forward) interleave to a padded symbol stream."""
+    n = len(symbols)
+    num_slots = n // packet_len
+    key = (n, num_slots)
+    perm_inv = _INTERLEAVE_CACHE.get(key)
+    if perm_inv is None:
+        _, perm_inv = _make_interleaver(n, num_slots)
+        _INTERLEAVE_CACHE[key] = perm_inv
+    return symbols[perm_inv]
 
 
 def build_encoder(cfg: TxConfig) -> Encoder:
@@ -154,8 +194,11 @@ def encode_and_send(encoder: Encoder, socket: zmq.Socket, cfg: TxConfig,
                     frame_bytes: bytes, label: str = "") -> None:
     t0 = time.time()
     symbols = encoder.encode(frame_bytes)
+    if cfg.interleave:
+        symbols = _interleave_symbols(symbols, cfg.packet_len)
     enc_ms = (time.time() - t0) * 1000.0
     print(f"  NN encode {len(symbols)} symbols in {enc_ms:.1f} ms"
+          + ("  [interleaved]" if cfg.interleave else "")
           + (f" [{label}]" if label else ""))
 
     for r in range(cfg.repeat):
@@ -176,6 +219,8 @@ def send_warmup(encoder: Encoder, socket: zmq.Socket, cfg: TxConfig) -> None:
     print(f"[*] Sending {cfg.warmup_frames} warmup frames for OFDM sync...")
     dummy = np.zeros((cfg.height, cfg.width, 3), dtype=np.uint8).tobytes()
     symbols = encoder.encode(dummy)
+    if cfg.interleave:
+        symbols = _interleave_symbols(symbols, cfg.packet_len)
     for i in range(cfg.warmup_frames):
         if cfg.direct_zmq:
             publish_symbols_pdu(socket, cfg.topic, symbols, cfg, label=f"warmup {i+1}")
@@ -489,6 +534,12 @@ def parse_arguments() -> argparse.Namespace:
                    help="Skip GNU Radio: PUSH PMT PDUs (with packet_num "
                         "metadata) directly to the RX's PULL socket on port "
                         "5559. Pair with `--port 5559` on the RX.")
+    p.add_argument("--interleave", action="store_true",
+                   help="Block-interleave the encoded symbols across OFDM "
+                        "packets before transmit, so a lost/weak packet "
+                        "spreads as diffuse speckle over the whole image "
+                        "instead of wiping one contiguous band. Must match "
+                        "--interleave on the RX.")
 
     return p.parse_args()
 
@@ -530,6 +581,7 @@ def build_config(args: argparse.Namespace) -> TxConfig:
         port=args.port,
         topic=args.topic.encode("utf-8") if args.topic else b"",
         direct_zmq=args.direct_zmq,
+        interleave=args.interleave,
     )
 
 

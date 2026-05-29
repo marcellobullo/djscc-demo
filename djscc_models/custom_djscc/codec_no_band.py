@@ -274,6 +274,13 @@ class Decoder:
             self.n_pkts, self.snr_db, dtype=np.float32
         )
 
+        # Optional per-element CSI override (set via set_element_snr_db).
+        # When not None it takes precedence over the per-packet vector in
+        # decode(). Used by the RX interleaver path, where reliability is
+        # scattered across the latent and can no longer be described as one
+        # value per contiguous packet.
+        self._element_csi_map = None
+
         dummy_chn = torch.randn(
             1, tcn, self.lat_H, self.lat_W,
             dtype=torch.float32, device=self.device,
@@ -306,6 +313,7 @@ class Decoder:
         self._snr_per_pkt_db = np.full(
             self.n_pkts, float(snr_db), dtype=np.float32
         )
+        self._element_csi_map = None
 
     def set_snr_db_vector(self, snr_db_per_pkt) -> None:
         """Set per-packet SNR. Length must equal n_pkts.
@@ -325,6 +333,36 @@ class Decoder:
             vec = vec.copy()
             vec[bad] = self.sentinel_drop_db
         self._snr_per_pkt_db = vec
+        self._element_csi_map = None
+
+    def set_element_snr_db(self, snr_db_per_symbol) -> None:
+        """Set a *per-complex-symbol* SNR map directly (latent flatten order).
+
+        Length must equal ``expected_complex_items`` ( = (M/2)*H/4*W/4 ). This
+        bypasses the per-packet -> per-element expansion and is used by the RX
+        interleaver path, where a single packet's symbols are scattered across
+        the whole latent, so reliability varies per element rather than per
+        contiguous strip.
+
+        The vector is laid out exactly like ``packetwise_to_element_map``'s
+        real half: reshape to [M/2, H/4, W/4] (C order), then tile to both the
+        real and imag channel halves so each complex symbol's two real-layout
+        elements share its CSI. Non-finite values become the sentinel SNR.
+        """
+        vec = np.asarray(snr_db_per_symbol, dtype=np.float32).reshape(-1)
+        if vec.size != self.expected_complex_items:
+            raise ValueError(
+                f"snr_db_per_symbol has length {vec.size}, expected "
+                f"{self.expected_complex_items}"
+            )
+        bad = ~np.isfinite(vec)
+        if bad.any():
+            vec = vec.copy()
+            vec[bad] = self.sentinel_drop_db
+        half = vec.reshape(self.tcn // 2, self.lat_H, self.lat_W)
+        full = np.concatenate([half, half], axis=0)  # [M, H/4, W/4]
+        t = torch.from_numpy(full).unsqueeze(0).to(self.device)  # [1, M, H, W]
+        self._element_csi_map = t
 
     def get_snr_db_vector(self) -> np.ndarray:
         return self._snr_per_pkt_db.copy()
@@ -358,7 +396,10 @@ class Decoder:
             dtype=torch.float32, device=self.device
         ).reshape(1, self.tcn, self.lat_H, self.lat_W)
 
-        csi_map = self._build_csi_map_tensor(self._snr_per_pkt_db)
+        if self._element_csi_map is not None:
+            csi_map = self._element_csi_map
+        else:
+            csi_map = self._build_csi_map_tensor(self._snr_per_pkt_db)
 
         with torch.no_grad():
             decoded = self.model(channel_tensor, csi_map)

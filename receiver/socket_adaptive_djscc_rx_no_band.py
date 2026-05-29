@@ -60,6 +60,26 @@ _DATA_CARRIERS = [k for k in _OCCUPIED_CARRIERS if k not in _PILOT_CARRIERS]
 _DATA_IDX = np.array([k + 32 for k in _DATA_CARRIERS], dtype=np.int64)
 
 
+# ---------------------------------------------------------------------------
+# Symbol interleaver (must match socket_adaptive_djscc_tx.py)
+# ---------------------------------------------------------------------------
+
+def _make_interleaver(num_items: int, num_slots: int):
+    """Return (perm_fwd, perm_inv) for a block interleaver over num_items.
+
+      perm_fwd[src_pos] = tx_pos   — apply at RX: latent = rx[perm_fwd]
+      perm_inv[tx_pos]  = src_pos  — apply at TX: tx    = latent[perm_inv]
+
+    Identical construction to the TX so the inverse is exact.
+    """
+    bps = num_items // num_slots
+    p = np.arange(num_items, dtype=np.int64)
+    perm_fwd = (p % num_slots) * bps + (p // num_slots)
+    perm_inv = np.empty(num_items, dtype=np.int64)
+    perm_inv[perm_fwd] = p
+    return perm_fwd, perm_inv
+
+
 @dataclass
 class RxConfig:
     model_path: str
@@ -92,6 +112,7 @@ class RxConfig:
     drop_seed: int = 0
     sentinel_drop_db: float = -20.0
     csi_db_scale: float = 20.0
+    interleave: bool = False
 
 
 def build_decoder(cfg: RxConfig) -> Decoder:
@@ -254,6 +275,14 @@ def receive_loop(
     PKT_PER_IMG = math.ceil(expected / PKT_LEN)
     samples_per_image = PKT_PER_IMG * PKT_LEN
 
+    # De-interleave permutation (latent = rx[perm_fwd]) over the full padded
+    # stream. Built once; matches the TX block interleaver exactly.
+    perm_fwd = None
+    if cfg.interleave:
+        perm_fwd, _ = _make_interleaver(samples_per_image, PKT_PER_IMG)
+        print(f"[*] Interleave ON: de-interleaving {samples_per_image} symbols "
+              f"({PKT_PER_IMG} slots x {PKT_LEN}) before decode.")
+
     if decoder.n_pkts != PKT_PER_IMG:
         print(
             f"[!] WARNING: decoder.n_pkts={decoder.n_pkts} but PKT_PER_IMG="
@@ -344,7 +373,14 @@ def receive_loop(
                 if not ok:
                     slot_buf[i * PKT_LEN:(i + 1) * PKT_LEN] = 0
 
-        symbols = slot_buf[:expected].copy()
+        # With interleaving the latent is scattered across all packets, so the
+        # padding tail can't simply be dropped yet — keep the full padded
+        # stream (still in TX/channel order) through the per-packet processing
+        # below, then de-interleave + truncate right before decode.
+        if cfg.interleave:
+            symbols = slot_buf.copy()
+        else:
+            symbols = slot_buf[:expected].copy()
 
         # ---- optional subcarrier-level erasure (unchanged from original) ----
         if snr_socket is not None and cfg.erase_snr_db is not None:
@@ -423,7 +459,16 @@ def receive_loop(
             sentinel_db=cfg.sentinel_drop_db,
             snr_feed_enabled=snr_feed_enabled,
         )
-        decoder.set_snr_db_vector(snr_db_per_slot)
+        if cfg.interleave:
+            # Scatter the per-slot SNR the same way the signal was scattered:
+            # expand to per-symbol (TX/channel order), de-interleave to latent
+            # order, drop the padding tail, then feed as a per-element map so
+            # the decoder is told which *scattered* elements are unreliable.
+            pos_snr = np.repeat(snr_db_per_slot, PKT_LEN)        # [samples_per_image]
+            elem_snr = pos_snr[perm_fwd][:expected]              # latent order
+            decoder.set_element_snr_db(elem_snr)
+        else:
+            decoder.set_snr_db_vector(snr_db_per_slot)
 
         finite_mask = snr_db_per_slot > (cfg.sentinel_drop_db + 0.5)
         if finite_mask.any():
@@ -455,7 +500,10 @@ def receive_loop(
                 raw_by_pn.pop(pn, None)
                 pilots_by_pn.pop(pn, None)
 
-        # ---- decode --------------------------------------------------------
+        # ---- de-interleave back to latent order, then decode ----------------
+        if cfg.interleave:
+            symbols = symbols[perm_fwd][:expected]
+
         t0 = time.time()
         try:
             img_bytes = decoder.decode(symbols)
@@ -719,6 +767,10 @@ def parse_arguments() -> argparse.Namespace:
     p.add_argument("--renorm-target", type=float, default=2.0)
     p.add_argument("--clip-mag", type=float, default=5.0)
     p.add_argument("--erase-snr-db", type=float, default=None)
+    p.add_argument("--interleave", action="store_true",
+                   help="De-interleave the received symbols (and scatter the "
+                        "per-slot CSI to a per-element map) before decoding. "
+                        "Must match --interleave on the TX.")
 
     return p.parse_args()
 
@@ -775,6 +827,7 @@ def build_config(args: argparse.Namespace) -> RxConfig:
         drop_seed=args.drop_seed,
         sentinel_drop_db=args.sentinel_drop_db,
         csi_db_scale=args.csi_db_scale,
+        interleave=args.interleave,
     )
 
 

@@ -1,7 +1,9 @@
 <div align="center">
+  <img src="banner.png" alt="Project Logo" />
+</div>
+
+<div align="center">
   <img src="assets/imperial_logo.png" alt="Institute Logo" height="30" />
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="assets/6g-goals-logo.png" alt="Project Logo" height="50" />
 </div>
 
 

@@ -6,13 +6,14 @@
   <img src="assets/imperial_logo.png" alt="Institute Logo" height="30" />
 </div>
 
+✍️ **Authors:** Marcello Bullo, Meng Hua
+
+📹 **Demo Video:** https://zenodo.org/records/20402945
+
+🖇️ **Reference**: m.bullo21@imperial.ac.uk (bullo.marcello@gmail.com), m.hua@imperial.ac.uk
+
 
 # DeepJSCC Demo
-
-**Authors:** Marcello Bullo, Meng Hua
-
-**Reference**: m.bullo21@imperial.ac.uk (bullo.marcello@gmail.com), m.hua@imperial.ac.uk
-
 **Description:** This repository contains a demonstration of Deep Joint Source-Channel Coding (DJSCC) along with a Conventional Separate Source-Channel Coding (SSCC) baseline (JPEG/JPEG2000+LDPC). The demo integrates Python-based deep learning models and traditional codecs with GNU Radio for Over-The-Air transmission.
 
 **DJSCC Mode**  

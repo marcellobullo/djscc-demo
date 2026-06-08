@@ -28,6 +28,15 @@ if _PKG_ROOT not in sys.path:
 from custom_djscc.codec import Decoder  # noqa: E402
 
 
+_OCCUPIED_CARRIERS = (
+    list(range(-26, -21)) + list(range(-20, -7)) + list(range(-6, 0))
+    + list(range(1, 7)) + list(range(8, 21)) + list(range(22, 27))
+)
+_PILOT_CARRIERS = (-21, -7, 7, 21)
+_DATA_CARRIERS = [k for k in _OCCUPIED_CARRIERS if k not in _PILOT_CARRIERS]
+_DATA_IDX = np.array([k + 32 for k in _DATA_CARRIERS], dtype=np.int64)
+
+
 @dataclass
 class RxConfig:
     model_path: str
@@ -49,6 +58,12 @@ class RxConfig:
     duplicate_threshold: float
     timeout: float
     packet_len: int
+    use_live_snr: bool = False
+    snr_port: str = "5560"
+    renorm: bool = False
+    renorm_target: float = 2.0
+    clip_mag: float = 5.0
+    erase_snr_db: float | None = None
     debug_dump: str = ""
     drop_spec: str = ""
     drop_seed: int = 0
@@ -137,7 +152,8 @@ class _DropPolicy:
         return f"DropPolicy({self.mode}, slots={head}{more})"
 
 
-def receive_loop(decoder: Decoder, socket: zmq.Socket, cfg: RxConfig, drop_policy: _DropPolicy) -> None:
+def receive_loop(decoder: Decoder, socket: zmq.Socket, cfg: RxConfig,
+                 drop_policy: _DropPolicy, snr_socket: zmq.Socket | None) -> None:
     expected = decoder.expected_complex_items
     PKT_LEN = cfg.packet_len
     PKT_PER_IMG = math.ceil(expected / PKT_LEN)
@@ -146,6 +162,10 @@ def receive_loop(decoder: Decoder, socket: zmq.Socket, cfg: RxConfig, drop_polic
     slot_buf = np.zeros(samples_per_image, dtype=np.complex64)
     seen = [False] * PKT_PER_IMG
     pn_log: list = []
+
+    h_by_pn: dict[int, np.ndarray] = {}
+    raw_by_pn: dict[int, float] = {}
+    pilots_by_pn: dict[int, float] = {}
 
     anchor_pn = None
     current_image_idx = None
@@ -216,22 +236,90 @@ def receive_loop(decoder: Decoder, socket: zmq.Socket, cfg: RxConfig, drop_polic
 
         symbols = slot_buf[:expected].copy()
 
-        pwr = float(np.mean(np.abs(symbols)**2))
-        mags = np.abs(symbols)
-        clip_mask = mags > 2.0
-        num_clipped = int(np.sum(clip_mask))
-        if num_clipped > 0:
-            print(f"  [!] WARNING: {num_clipped} symbols exploded. "
-                  f"Clipping magnitudes to 2.0.")
-            symbols[clip_mask] = (symbols[clip_mask] / mags[clip_mask]) * 2.0
+        if snr_socket is not None and cfg.erase_snr_db is not None:
+            n_data_per_ofdm = len(_DATA_IDX)
+            n_ofdm_per_pkt = PKT_LEN // n_data_per_ofdm
+            n_erased_total = 0
+            n_pkts_with_erasure = 0
+            for pn, slot in pn_log:
+                h = h_by_pn.get(pn)
+                s2 = raw_by_pn.get(pn)
+                if h is None or s2 is None or s2 <= 0:
+                    continue
+                h_pow = np.abs(h[_DATA_IDX]) ** 2
+                snr_per_sub_db = 10.0 * np.log10(np.maximum(h_pow / s2, 1e-12))
+                bad = snr_per_sub_db < cfg.erase_snr_db
+                if not bad.any():
+                    continue
+                slot_start = slot * PKT_LEN
+                for ofdm_idx in range(n_ofdm_per_pkt):
+                    base = slot_start + ofdm_idx * n_data_per_ofdm
+                    if base + n_data_per_ofdm > len(symbols):
+                        break
+                    symbols[base:base + n_data_per_ofdm][bad] = 0
+                n_erased_total += int(bad.sum()) * n_ofdm_per_pkt
+                n_pkts_with_erasure += 1
+            if n_erased_total > 0:
+                print(f"  [erase] {n_erased_total} symbols from weak "
+                      f"subcarriers (< {cfg.erase_snr_db:.1f} dB) zeroed "
+                      f"across {n_pkts_with_erasure} packets")
 
-        print(f"[!] MAX POWER: {np.max(np.abs(symbols))}")
-        print(f"[!] MIN POWER: {np.min(np.abs(symbols))}")
-        print(f"[!] AVERAGE POWER BEFORE CLIPPING: {pwr:.2f}, "
-              f"AFTER: {np.mean(np.abs(symbols)**2):.2f}")
+        pwr = float(np.mean(np.abs(symbols)**2))
+        mag_max_before = float(np.max(np.abs(symbols)))
+
+        if cfg.clip_mag > 0:
+            mags = np.abs(symbols)
+            clip_mask = mags > cfg.clip_mag
+            num_clipped = int(np.sum(clip_mask))
+            if num_clipped > 0:
+                symbols[clip_mask] = (symbols[clip_mask] / mags[clip_mask]) * cfg.clip_mag
+                print(f"  [clip] {num_clipped} symbols above |x|>{cfg.clip_mag} "
+                      f"pulled to magnitude {cfg.clip_mag}")
+
+        if cfg.renorm:
+            pwr_pre = float(np.mean(np.abs(symbols)**2))
+            if pwr_pre > 0:
+                symbols *= np.complex64(np.sqrt(cfg.renorm_target / pwr_pre))
+            pwr_after = float(np.mean(np.abs(symbols)**2))
+            print(f"  [renorm] avg |x|^2: "
+                  f"raw={pwr:.3f}  pre={pwr_pre:.3f}  target={cfg.renorm_target:.2f}  "
+                  f"post={pwr_after:.3f}  (max |x| now={np.max(np.abs(symbols)):.2f})")
+        else:
+            print(f"  [pwr ] avg |x|^2={pwr:.3f}  max |x|={mag_max_before:.2f}  "
+                  f"post-clip avg |x|^2={np.mean(np.abs(symbols)**2):.3f}")
 
         total_frames += 1
         last_frame_time = time.time()
+
+        if snr_socket is not None:
+            linear_noise_samples = []
+            pilot_noise_samples = []
+            for pn, _slot in pn_log:
+                h = h_by_pn.get(pn)
+                s2 = raw_by_pn.get(pn)
+                if h is not None and s2 is not None:
+                    h_pow = np.maximum(np.abs(h[_DATA_IDX]) ** 2, 1e-12)
+                    linear_noise_samples.append(float((s2 / h_pow).mean()))
+                s2p = pilots_by_pn.get(pn)
+                if s2p is not None and s2p > 0:
+                    pilot_noise_samples.append(float(s2p))
+            if linear_noise_samples:
+                avg_noise = float(np.mean(linear_noise_samples))
+                snr_used = 10.0 * np.log10(1.0 / avg_noise) if avg_noise > 0 else cfg.snr_db
+                decoder.set_snr_db(snr_used)
+                extra = ""
+                if pilot_noise_samples:
+                    snr_p = 10.0 * np.log10(1.0 / float(np.mean(pilot_noise_samples)))
+                    extra = f" | pilots={snr_p:+.2f} dB"
+                print(f"  [snr] live={snr_used:.2f} dB over "
+                      f"{len(linear_noise_samples)}/{len(pn_log)} pkts "
+                      f"(image had {sum(seen)}/{PKT_PER_IMG}){extra}")
+            else:
+                print(f"  [snr] fallback={cfg.snr_db} dB (no live samples for this image)")
+            for pn, _ in pn_log:
+                h_by_pn.pop(pn, None)
+                raw_by_pn.pop(pn, None)
+                pilots_by_pn.pop(pn, None)
 
         t0 = time.time()
         try:
@@ -305,6 +393,42 @@ def receive_loop(decoder: Decoder, socket: zmq.Socket, cfg: RxConfig, drop_polic
                 pn_log = []
                 current_image_idx = None
                 anchor_pn = None
+
+            if snr_socket is not None:
+                while True:
+                    try:
+                        snr_raw = snr_socket.recv(flags=zmq.NOBLOCK)
+                    except zmq.Again:
+                        break
+                    try:
+                        snr_pdu = pmt.deserialize_str(snr_raw)
+                        snr_meta = pmt.car(snr_pdu)
+                        pn = pmt.to_long(pmt.dict_ref(
+                            snr_meta, pmt.intern('packet_num'), pmt.from_long(-1)))
+                        if pn < 0:
+                            continue
+                        kind = pmt.symbol_to_string(pmt.dict_ref(
+                            snr_meta, pmt.intern('kind'), pmt.intern('?')))
+                        if kind == 'h':
+                            h_by_pn[pn] = np.array(
+                                pmt.c32vector_elements(pmt.cdr(snr_pdu)),
+                                dtype=np.complex64)
+                        elif kind == 'raw':
+                            raw_by_pn[pn] = pmt.to_double(pmt.dict_ref(
+                                snr_meta, pmt.intern('sigma2'),
+                                pmt.from_double(float('nan'))))
+                        elif kind == 'pilots':
+                            pilots_by_pn[pn] = pmt.to_double(pmt.dict_ref(
+                                snr_meta, pmt.intern('sigma2'),
+                                pmt.from_double(float('nan'))))
+                    except Exception as e:
+                        print(f"[!] SNR PDU parse failed: {e}")
+                if anchor_pn is not None:
+                    cutoff = anchor_pn - 4 * PKT_PER_IMG
+                    for d in (h_by_pn, raw_by_pn, pilots_by_pn):
+                        stale = [k for k in d if k < cutoff]
+                        for k in stale:
+                            d.pop(k, None)
 
             try:
                 raw = socket.recv(flags=zmq.NOBLOCK)
@@ -443,6 +567,28 @@ def parse_arguments() -> argparse.Namespace:
     p.add_argument("--drop-seed", type=int, default=0,
                    help="RNG seed for --drop-slots random mode "
                         "(0 = nondeterministic).")
+    p.add_argument("--use-live-snr", action="store_true",
+                   help="Subscribe to per-packet SNR ingredients on --snr-port "
+                        "and condition the decoder per-image with the Nulls+Taps "
+                        "formula. Falls back to --snr-db if no samples arrive.")
+    p.add_argument("--snr-port", type=str, default="5560",
+                   help="ZMQ port for the live-SNR feed (default: 5560)")
+    p.add_argument("--renorm", action="store_true",
+                   help="Replace the magnitude clip with per-image "
+                        "renormalization of received symbols to --renorm-target "
+                        "average power before decode.")
+    p.add_argument("--renorm-target", type=float, default=2.0,
+                   help="Target average |x|^2 when --renorm is on. Default 2.0 "
+                        "matches the codec's kaira AveragePowerConstraint "
+                        "(power=1.0 per real dim → 2.0 per complex symbol).")
+    p.add_argument("--clip-mag", type=float, default=5.0,
+                   help="Hard clip magnitude (default 5.0, well above the "
+                        "encoder's typical |x|_max ≈ 4.1). Set to 0 to disable.")
+    p.add_argument("--erase-snr-db", type=float, default=None,
+                   help="Effective only with --use-live-snr. Zero out symbols "
+                        "from data subcarriers whose per-packet effective SNR "
+                        "(|H|^2 / sigma2_raw) is below this floor in dB (e.g. "
+                        "0.0 to drop everything below 0 dB).")
 
     return p.parse_args()
 
@@ -485,6 +631,12 @@ def build_config(args: argparse.Namespace) -> RxConfig:
         duplicate_threshold=args.duplicate_threshold,
         timeout=args.timeout,
         packet_len=args.packet_len,
+        use_live_snr=args.use_live_snr,
+        snr_port=args.snr_port,
+        renorm=args.renorm,
+        renorm_target=args.renorm_target,
+        clip_mag=args.clip_mag,
+        erase_snr_db=args.erase_snr_db,
         debug_dump=args.debug_dump,
         drop_spec=args.drop_slots,
         drop_seed=args.drop_seed,
@@ -511,6 +663,16 @@ def main() -> int:
     print(f"[*] Resolution: {cfg.width}x{cfg.height} | "
           f"tcn={cfg.tcn} | SNR={cfg.snr_db} dB (CSI-adaptive)")
 
+    snr_socket = None
+    if cfg.use_live_snr:
+        snr_address = f"tcp://{cfg.connect_host}:{cfg.snr_port}"
+        snr_socket = ctx.socket(zmq.PULL)
+        snr_socket.setsockopt(zmq.RCVHWM, 5000)
+        snr_socket.connect(snr_address)
+        print(f"[*] ZMQ PULL connected to {snr_address} (live SNR feed)")
+    else:
+        print("[*] Live SNR feed disabled (use --use-live-snr to enable)")
+
     if cfg.save:
         print(f"[*] Saving to: {os.path.abspath(cfg.output_dir)}")
     else:
@@ -521,7 +683,7 @@ def main() -> int:
           f"(seed={cfg.drop_seed or 'nondeterministic'})")
 
     try:
-        receive_loop(decoder, socket, cfg, drop_policy)
+        receive_loop(decoder, socket, cfg, drop_policy, snr_socket)
         return 0
     except KeyboardInterrupt:
         print("\n[*] Interrupted by user.")
@@ -532,6 +694,12 @@ def main() -> int:
         except Exception:
             pass
         socket.close()
+        if snr_socket is not None:
+            try:
+                snr_socket.setsockopt(zmq.LINGER, 0)
+            except Exception:
+                pass
+            snr_socket.close()
         ctx.term()
         print("[*] Resources released. Exiting.")
 

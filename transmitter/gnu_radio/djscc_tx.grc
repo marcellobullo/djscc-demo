@@ -310,7 +310,7 @@ blocks:
     label: 'Device IP address '
     short_id: ''
     type: str
-    value: '"192.168.1.68"'
+    value: '"192.168.1.67"'
   states:
     bus_sink: false
     bus_source: false

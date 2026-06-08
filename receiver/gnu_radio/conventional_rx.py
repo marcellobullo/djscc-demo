@@ -39,7 +39,7 @@ import threading
 
 class conventional_rx(gr.top_block, Qt.QWidget):
 
-    def __init__(self, band=5e6, carrier_freq=2.45e9, device_address="192.168.1.68", mod_order=1, samp_rate=1e6):
+    def __init__(self, band=5e6, carrier_freq=2.45e9, device_address="192.168.1.67", mod_order=4, samp_rate=1e6):
         gr.top_block.__init__(self, "OFDM Receiver for Conventional SSCC", catch_exceptions=True)
         Qt.QWidget.__init__(self)
         self.setWindowTitle("OFDM Receiver for Conventional SSCC")
@@ -313,7 +313,7 @@ class conventional_rx(gr.top_block, Qt.QWidget):
             (),
             0)
         self.digital_header_payload_demux_0.set_min_output_buffer(2000000)
-        self.digital_constellation_soft_decoder_cf_0 = digital.constellation_soft_decoder_cf(payload_mod.base(), 10**(-1/10))
+        self.digital_constellation_soft_decoder_cf_0 = digital.constellation_soft_decoder_cf(payload_mod.base(), 10**(-1/1))
         self.digital_constellation_decoder_cb_0 = digital.constellation_decoder_cb(header_mod.base())
         self.blocks_tagged_stream_multiply_length_0 = blocks.tagged_stream_multiply_length(gr.sizeof_float*1, "packet_len", mod_order)
         self.blocks_multiply_xx_0 = blocks.multiply_vcc(1)
@@ -505,10 +505,10 @@ def argument_parser():
         "--carrier-freq", dest="carrier_freq", type=eng_float, default=eng_notation.num_to_str(float(2.45e9)),
         help="Set Carrier Frequency [default=%(default)r]")
     parser.add_argument(
-        "--device-address", dest="device_address", type=str, default="192.168.1.68",
+        "--device-address", dest="device_address", type=str, default="192.168.1.67",
         help="Set Device IP address  [default=%(default)r]")
     parser.add_argument(
-        "--mod-order", dest="mod_order", type=intx, default=1,
+        "--mod-order", dest="mod_order", type=intx, default=4,
         help="Set Bits Per Modulation Symbol [default=%(default)r]")
     parser.add_argument(
         "--samp-rate", dest="samp_rate", type=eng_float, default=eng_notation.num_to_str(float(1e6)),

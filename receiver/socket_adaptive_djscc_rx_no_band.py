@@ -32,6 +32,7 @@ Run with a *no-band* checkpoint:
 """
 
 import argparse
+import csv
 import math
 import os
 import sys
@@ -113,6 +114,12 @@ class RxConfig:
     sentinel_drop_db: float = -20.0
     csi_db_scale: float = 20.0
     interleave: bool = False
+    # Controlled-experiment mode: one PNG per transmitted image, named by
+    # transmission-order index, no SSIM dedup. tx_gain/rx_gain only tag the
+    # output folder (the RX does not set the radio gains).
+    exp_id_mode: bool = False
+    tx_gain: str | None = None
+    rx_gain: str | None = None
 
 
 def build_decoder(cfg: RxConfig) -> Decoder:
@@ -313,6 +320,7 @@ def receive_loop(
         print(f"[*] Forensic dumps -> {os.path.abspath(cfg.debug_dump)}")
 
     unique_images = []
+    exp_manifest: list[dict] = []
     last_saved_img = None
     total_frames = 0
     last_frame_time = time.time()
@@ -517,6 +525,39 @@ def receive_loop(
         frame_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         n_images += 1
 
+        # -------- controlled-experiment save (order-keyed, no dedup) --------
+        if cfg.exp_id_mode:
+            # n_images is incremented once per flushed image just above, in
+            # transmission order. Do NOT use current_image_idx: the anchor is
+            # reset between images, so it is not a global running index.
+            img_id = n_images - 1
+            filename = f"image_{img_id:03d}.png"
+            save_path = os.path.join(cfg.output_dir, filename)
+            if cfg.save:
+                cv2.imwrite(save_path, frame_bgr)
+            exp_manifest.append({
+                "image_id": img_id,
+                "filename": filename,
+                "frame": total_frames,
+                "slots_seen": PKT_PER_IMG - n_missed,
+                "slots_missing": n_missed,
+                "mean_snr_db": round(mean_finite_db, 3),
+                "decode_ok": 1,
+            })
+            print(
+                f"  [*] Frame {total_frames}: image_id={img_id} "
+                f"{'saved -> ' + filename if cfg.save else '(not saved)'} "
+                f"({PKT_PER_IMG - n_missed}/{PKT_PER_IMG} slots, "
+                f"decode={dec_ms:.1f} ms)"
+            )
+            display = frame_bgr.copy()
+            cv2.putText(
+                display, f"id {img_id} | frame {total_frames}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2,
+            )
+            cv2.imshow(window_title, display)
+            return
+
         is_duplicate = False
         if last_saved_img is not None:
             sim = compute_ssim_fast(frame_bgr, last_saved_img)
@@ -696,7 +737,8 @@ def receive_loop(
                 pn_log = []
                 current_image_idx = None
 
-            if cfg.count > 0 and unique_count >= cfg.count:
+            done_n = n_images if cfg.exp_id_mode else unique_count
+            if cfg.count > 0 and done_n >= cfg.count:
                 print(f"\n[*] Received {unique_count} unique image(s). Done.")
                 cv2.waitKey(2000)
                 raise KeyboardInterrupt
@@ -705,6 +747,18 @@ def receive_loop(
         print("\n[*] Receiver stopped.")
     finally:
         cv2.destroyAllWindows()
+        if cfg.exp_id_mode and exp_manifest:
+            try:
+                os.makedirs(cfg.output_dir, exist_ok=True)
+                man_path = os.path.join(cfg.output_dir, "manifest.csv")
+                with open(man_path, "w", newline="") as f:
+                    w = csv.DictWriter(f, fieldnames=list(exp_manifest[0].keys()))
+                    w.writeheader()
+                    w.writerows(exp_manifest)
+                print(f"  Manifest written:       {man_path} "
+                      f"({len(exp_manifest)} rows)")
+            except Exception as e:
+                print(f"  [!] manifest write failed: {e}")
         print(f"\n{'=' * 50}")
         print(f"  Total frames received:  {total_frames}")
         print(f"  Unique images:          {unique_count}")
@@ -772,6 +826,20 @@ def parse_arguments() -> argparse.Namespace:
                         "per-slot CSI to a per-element map) before decoding. "
                         "Must match --interleave on the TX.")
 
+    p.add_argument("--exp-id-mode", action="store_true",
+                   help="Controlled-experiment mode: save exactly one PNG per "
+                        "transmitted image, named image_<order>.png by "
+                        "transmission-order index (no SSIM dedup), plus a "
+                        "manifest.csv. Run the TX with --no-warmup and start "
+                        "this RX first so order index 0 == first original.")
+    p.add_argument("--tx-gain", type=str, default=None,
+                   help="TX USRP gain for this run (folder tag only; the RX "
+                        "does not set the radio gain). If both --tx-gain and "
+                        "--rx-gain are given, output dir becomes "
+                        "received_images/tx-<tx>_rx-<rx>.")
+    p.add_argument("--rx-gain", type=str, default=None,
+                   help="RX USRP gain for this run (folder tag only).")
+
     return p.parse_args()
 
 
@@ -796,6 +864,11 @@ def build_config(args: argparse.Namespace) -> RxConfig:
             f"valid options yield positive integer tcn."
         )
 
+    output_dir = args.output_dir
+    if args.tx_gain is not None and args.rx_gain is not None:
+        output_dir = os.path.join(
+            "received_images", f"tx-{args.tx_gain}_rx-{args.rx_gain}")
+
     return RxConfig(
         model_path=args.model,
         width=args.width,
@@ -810,7 +883,7 @@ def build_config(args: argparse.Namespace) -> RxConfig:
         quantize_cpu=args.quantize_cpu,
         port=args.port,
         connect_host=args.connect_host,
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         save=not args.no_save,
         count=args.count,
         duplicate_threshold=args.duplicate_threshold,
@@ -828,6 +901,9 @@ def build_config(args: argparse.Namespace) -> RxConfig:
         sentinel_drop_db=args.sentinel_drop_db,
         csi_db_scale=args.csi_db_scale,
         interleave=args.interleave,
+        exp_id_mode=args.exp_id_mode,
+        tx_gain=args.tx_gain,
+        rx_gain=args.rx_gain,
     )
 
 

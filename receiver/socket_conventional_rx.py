@@ -49,6 +49,7 @@ Examples::
 from __future__ import annotations
 
 import argparse
+import csv
 import io
 import math
 import os
@@ -126,6 +127,13 @@ class RxConventionalConfig:
 
     # Interleaver (must match TX --interleave)
     interleave: bool
+
+    # Controlled-experiment mode: one PNG per transmitted image, named by
+    # transmission-order index, plus a manifest.csv. tx_gain/rx_gain only tag
+    # the output folder (the RX does not set the radio gains).
+    exp_id_mode: bool = False
+    tx_gain: Optional[str] = None
+    rx_gain: Optional[str] = None
 
 
 # =====================================================================
@@ -413,6 +421,7 @@ def receive_loop(socket: zmq.Socket,
     n_total = 0
     n_decoded_ok = 0
     last_image_time = time.time()
+    exp_manifest: list[dict] = []
 
     perm_fwd: Optional[np.ndarray] = None
     if cfg.interleave:
@@ -484,6 +493,7 @@ def receive_loop(socket: zmq.Socket,
         bgr = decompress_to_bgr(msg_bytes.tobytes(), cfg.width, cfg.height)
         jpeg_ms = (time.time() - t0) * 1000.0
 
+        decode_ok = bgr is not None
         label = f"img {n_total}"
         if bgr is None:
             print(f"  [{label}] LDPC ok ({ldpc_ms:.0f} ms) but JPEG decode "
@@ -499,7 +509,36 @@ def receive_loop(socket: zmq.Socket,
 
         last_image_time = time.time()
 
-        if cfg.save and bgr is not None:
+        if cfg.exp_id_mode:
+            # n_total is incremented once per flushed image just above, in
+            # transmission order. Do NOT use current_image_idx: the anchor is
+            # reset per image, so it is always 0.
+            img_id = n_total - 1
+            fname = f"image_{img_id:03d}.png"
+            if cfg.save:
+                if decode_ok:
+                    cv2.imwrite(os.path.join(cfg.output_dir, fname), bgr)
+                else:
+                    # Decode failed: save an all-black frame so every
+                    # transmitted id has a file. The failure is recorded in the
+                    # manifest (decode_ok=0); compute_psnr.py decides how to
+                    # score it via --fail-mode, so the black pixels here are
+                    # mainly for visual inspection / folder completeness.
+                    black = np.zeros((cfg.height, cfg.width, 3), dtype=np.uint8)
+                    cv2.imwrite(os.path.join(cfg.output_dir, fname), black)
+            exp_manifest.append({
+                "image_id": img_id,
+                "filename": fname,
+                "image_attempt": n_total,
+                "slots_seen": PKT_PER_IMG - n_missed,
+                "slots_missing": n_missed,
+                "decode_ok": int(decode_ok),
+            })
+            print(f"  [*] image_id={img_id} decode_ok={decode_ok} "
+                  f"{'saved -> ' + fname if cfg.save else '(not saved)'}"
+                  f"{'' if decode_ok else ' [BLACK]'} "
+                  f"({PKT_PER_IMG - n_missed}/{PKT_PER_IMG} slots)")
+        elif cfg.save and bgr is not None:
             stamp = time.strftime("%Y%m%d_%H%M%S")
             fname = f"image_{n_decoded_ok:03d}_{stamp}.png"
             cv2.imwrite(os.path.join(cfg.output_dir, fname), bgr)
@@ -588,6 +627,18 @@ def receive_loop(socket: zmq.Socket,
         print("\n[*] Receiver stopped by user.")
     finally:
         cv2.destroyAllWindows()
+        if cfg.exp_id_mode and exp_manifest:
+            try:
+                os.makedirs(cfg.output_dir, exist_ok=True)
+                man_path = os.path.join(cfg.output_dir, "manifest.csv")
+                with open(man_path, "w", newline="") as f:
+                    w = csv.DictWriter(f, fieldnames=list(exp_manifest[0].keys()))
+                    w.writeheader()
+                    w.writerows(exp_manifest)
+                print(f"  Manifest written:         {man_path} "
+                      f"({len(exp_manifest)} rows)")
+            except Exception as e:
+                print(f"  [!] manifest write failed: {e}")
         print(f"\n{'='*50}")
         print(f"  Total images attempted:   {n_total}")
         print(f"  Decoded successfully:     {n_decoded_ok}")
@@ -633,6 +684,21 @@ def parse_arguments() -> argparse.Namespace:
     p.add_argument("--debug", action="store_true")
     p.add_argument("--interleave", action="store_true")
 
+    p.add_argument("--exp-id-mode", action="store_true",
+                   help="Controlled-experiment mode: save exactly one PNG per "
+                        "transmitted image, named image_<order>.png by "
+                        "transmission-order index, plus a manifest.csv "
+                        "(records decode_ok per id). Run the TX with "
+                        "--no-warmup and start this RX first so order index 0 "
+                        "== first original.")
+    p.add_argument("--tx-gain", type=str, default=None,
+                   help="TX USRP gain for this run (folder tag only; the RX "
+                        "does not set the radio gain). If both --tx-gain and "
+                        "--rx-gain are given, output dir becomes "
+                        "received_images/tx-<tx>_rx-<rx>.")
+    p.add_argument("--rx-gain", type=str, default=None,
+                   help="RX USRP gain for this run (folder tag only).")
+
     return p.parse_args()
 
 
@@ -642,6 +708,11 @@ def build_config(args: argparse.Namespace) -> RxConventionalConfig:
     else:
         tcn = int((1 / args.comp_ratio) * 4 * 4 * 2 * 3)
         target_symbols = (tcn * (args.height // 4) * (args.width // 4)) // 2
+
+    output_dir = args.output_dir
+    if args.tx_gain is not None and args.rx_gain is not None:
+        output_dir = os.path.join(
+            "received_images", f"tx-{args.tx_gain}_rx-{args.rx_gain}")
 
     return RxConventionalConfig(
         width=args.width,
@@ -660,11 +731,14 @@ def build_config(args: argparse.Namespace) -> RxConventionalConfig:
         device=_pick_device(args.device),
         window_title=f"Conventional RX ({args.demap}) — LDPC + JPEG/J2K",
         save=not args.no_save,
-        output_dir=args.output_dir,
+        output_dir=output_dir,
         idle_gap_s=args.idle_gap,
         timeout_s=args.timeout,
         debug=args.debug,
         interleave=args.interleave,
+        exp_id_mode=args.exp_id_mode,
+        tx_gain=args.tx_gain,
+        rx_gain=args.rx_gain,
     )
 
 

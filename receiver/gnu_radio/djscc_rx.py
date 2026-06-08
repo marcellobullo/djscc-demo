@@ -33,6 +33,7 @@ import time
 from gnuradio import zeromq
 import djscc_rx_chan_taps_logger_0 as chan_taps_logger_0  # embedded python block
 import djscc_rx_pilot_snr_logger_0 as pilot_snr_logger_0  # embedded python block
+import djscc_rx_raw_noise_logger_0 as raw_noise_logger_0  # embedded python block
 import sip
 import threading
 
@@ -40,7 +41,7 @@ import threading
 
 class djscc_rx(gr.top_block, Qt.QWidget):
 
-    def __init__(self, band=5e6, carrier_freq=2.45e9, device_address="192.168.1.68", samp_rate=1e6):
+    def __init__(self, band=5e6, carrier_freq=2.45e9, device_address="192.168.1.67", samp_rate=1e6):
         gr.top_block.__init__(self, "OFDM Image Receiver for DJSCC", catch_exceptions=True)
         Qt.QWidget.__init__(self)
         self.setWindowTitle("OFDM Image Receiver for DJSCC")
@@ -102,6 +103,7 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         self._receiver_gain_range = qtgui.Range(0, 70, 5, 20, 200)
         self._receiver_gain_win = qtgui.RangeWidget(self._receiver_gain_range, self.set_receiver_gain, "'receiver_gain'", "counter_slider", int, QtCore.Qt.Horizontal)
         self.top_layout.addWidget(self._receiver_gain_win)
+        self.zeromq_push_msg_sink_1 = zeromq.push_msg_sink('tcp://127.0.0.1:5560', 100, True)
         self.zeromq_push_msg_sink_0 = zeromq.push_msg_sink('tcp://127.0.0.1:5558', 100, True)
         self.uhd_usrp_source_0_0 = uhd.usrp_source(
             ",".join(("addr="+device_address, '')),
@@ -118,6 +120,7 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         self.uhd_usrp_source_0_0.set_antenna("TX/RX", 0)
         self.uhd_usrp_source_0_0.set_bandwidth(band, 0)
         self.uhd_usrp_source_0_0.set_gain(receiver_gain, 0)
+        self.raw_noise_logger_0 = raw_noise_logger_0.blk(fft_len=fft_len, null_positions=[0, 1, 2, 3, 4, 5, 59, 60, 61, 62, 63], out_path="/tmp/raw_noise_dataset.npz", flush_every=200)
         self.qtgui_waterfall_sink_x_0_RX = qtgui.waterfall_sink_c(
             1024, #size
             window.WIN_BLACKMAN_hARRIS, #wintype
@@ -324,9 +327,12 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         ##################################################
         # Connections
         ##################################################
+        self.msg_connect((self.chan_taps_logger_0, 'snr_part'), (self.zeromq_push_msg_sink_1, 'in'))
         self.msg_connect((self.digital_packet_headerparser_b_0_0, 'header_data'), (self.chan_taps_logger_0, 'header_valid'))
         self.msg_connect((self.digital_packet_headerparser_b_0_0, 'header_data'), (self.digital_header_payload_demux_0, 'header_data'))
         self.msg_connect((self.pdu_tagged_stream_to_pdu_0, 'pdus'), (self.zeromq_push_msg_sink_0, 'in'))
+        self.msg_connect((self.pilot_snr_logger_0, 'snr_part'), (self.zeromq_push_msg_sink_1, 'in'))
+        self.msg_connect((self.raw_noise_logger_0, 'snr_part'), (self.zeromq_push_msg_sink_1, 'in'))
         self.connect((self.analog_frequency_modulator_fc_0, 0), (self.blocks_multiply_xx_0, 1))
         self.connect((self.blocks_delay_0, 0), (self.blocks_multiply_xx_0, 0))
         self.connect((self.blocks_multiply_const_vxx_0_1, 0), (self.pdu_tagged_stream_to_pdu_0, 0))
@@ -346,6 +352,7 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         self.connect((self.digital_ofdm_sync_sc_cfb_0, 1), (self.digital_header_payload_demux_0, 1))
         self.connect((self.fft_vxx_0_0, 0), (self.digital_ofdm_chanest_vcvc_0, 0))
         self.connect((self.fft_vxx_1, 0), (self.digital_ofdm_frame_equalizer_vcvc_1, 0))
+        self.connect((self.fft_vxx_1, 0), (self.raw_noise_logger_0, 0))
         self.connect((self.uhd_usrp_source_0_0, 0), (self.blocks_delay_0, 0))
         self.connect((self.uhd_usrp_source_0_0, 0), (self.digital_ofdm_sync_sc_cfb_0, 0))
         self.connect((self.uhd_usrp_source_0_0, 0), (self.qtgui_freq_sink_x_0_RX, 0))
@@ -443,6 +450,7 @@ class djscc_rx(gr.top_block, Qt.QWidget):
         self.blocks_delay_0.set_dly(int((self.fft_len+int(self.fft_len/4))))
         self.chan_taps_logger_0.fft_len = self.fft_len
         self.pilot_snr_logger_0.fft_len = self.fft_len
+        self.raw_noise_logger_0.fft_len = self.fft_len
 
     def get_sync_word2(self):
         return self.sync_word2
@@ -493,7 +501,7 @@ def argument_parser():
         "--carrier-freq", dest="carrier_freq", type=eng_float, default=eng_notation.num_to_str(float(2.45e9)),
         help="Set Carrier Frequency [default=%(default)r]")
     parser.add_argument(
-        "--device-address", dest="device_address", type=str, default="192.168.1.68",
+        "--device-address", dest="device_address", type=str, default="192.168.1.67",
         help="Set Device IP address  [default=%(default)r]")
     parser.add_argument(
         "--samp-rate", dest="samp_rate", type=eng_float, default=eng_notation.num_to_str(float(1e6)),

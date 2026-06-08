@@ -1,23 +1,4 @@
-"""Header-gated channel-tap logger with packet_len validation.
-
-Sits between digital_ofdm_chanest_vcvc and digital_ofdm_frame_equalizer_vcvc.
-Passes vectors through unchanged. For every input item, reads any
-ofdm_sync_chan_taps stream tags and appends the complex vector to a
-pending buffer. On every header_valid PDU, parses the header's
-packet_len field; only if it exactly equals the expected packet_len
-(e.g. 960) AND packet_num is in a sane 24-bit non-negative range does
-it commit the most-recent pending h (and its packet_num) to permanent
-storage. Otherwise the message is treated as a spurious sync.
-
-Output: .npz with two aligned arrays:
-  - packet_num: int64 (N,)
-  - h:          complex64 (N, fft_len)
-Use packet_num to merge with pilot_snr_logger output offline.
-
-Wire the 'header_data' output of digital_packet_headerparser_b to the
-'header_valid' input of this block (parallel to its existing
-connection to digital_header_payload_demux_0).
-"""
+"""Header-gated channel-tap logger with packet_len validation."""
 
 import threading
 import numpy as np
@@ -50,10 +31,10 @@ class blk(gr.sync_block):
         self.msg_port = pmt.intern('header_valid')
         self.message_port_register_in(self.msg_port)
         self.set_msg_handler(self.msg_port, self._on_header_valid)
+        self.snr_part_port = pmt.intern('snr_part')
+        self.message_port_register_out(self.snr_part_port)
 
     def _extract_int(self, msg, key):
-        """Robust int extraction. A PMT dict is internally a list of pairs, so
-        is_pair() can't reliably distinguish dict vs (meta, payload) pair."""
         sentinel = pmt.from_long(-(1 << 30))
         candidates = [msg]
         try:
@@ -79,11 +60,17 @@ class blk(gr.sync_block):
         with self._lock:
             if not self.pending:
                 return
-            self.h_list.append(self.pending[-1])
+            h_finalized = self.pending[-1]
+            self.h_list.append(h_finalized)
             self.pn_list.append(int(pn))
             self.pending.clear()
             if len(self.pn_list) % self.flush_every == 0:
                 self._flush()
+        meta = pmt.make_dict()
+        meta = pmt.dict_add(meta, pmt.intern('packet_num'), pmt.from_long(int(pn)))
+        meta = pmt.dict_add(meta, pmt.intern('kind'), pmt.intern('h'))
+        payload = pmt.init_c32vector(self.fft_len, h_finalized.tolist())
+        self.message_port_pub(self.snr_part_port, pmt.cons(meta, payload))
 
     def _flush(self):
         if not self.pn_list:

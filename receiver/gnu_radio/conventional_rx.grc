@@ -333,7 +333,7 @@ blocks:
     label: 'Device IP address '
     short_id: ''
     type: str
-    value: '"192.168.1.68"'
+    value: '"192.168.1.67"'
   states:
     bus_sink: false
     bus_source: false
@@ -369,7 +369,7 @@ blocks:
     constellation: payload_mod.base()
     maxoutbuf: '0'
     minoutbuf: '0'
-    npwr: 10**(-1/10)
+    npwr: 10**(-1/1)
   states:
     bus_sink: false
     bus_source: false
@@ -637,7 +637,7 @@ blocks:
     label: Bits Per Modulation Symbol
     short_id: ''
     type: intx
-    value: '1'
+    value: '4'
   states:
     bus_sink: false
     bus_source: false
